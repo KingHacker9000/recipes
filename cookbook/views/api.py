@@ -44,8 +44,6 @@ from django_scopes import scopes_disabled
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema, extend_schema_view, OpenApiExample, inline_serializer
 from icalendar import Calendar, Event
-from litellm import completion, BadRequestError
-from litellm.exceptions import Timeout as LitellmTimeout
 from oauth2_provider.models import AccessToken
 from recipe_scrapers import scrape_html
 from recipe_scrapers._exceptions import NoSchemaFoundInWildMode
@@ -71,6 +69,9 @@ from cookbook.forms import ImportForm, ImportExportBase
 from cookbook.helper import recipe_url_import as helper
 from cookbook.helper.HelperFunctions import str2bool, safe_request
 from cookbook.helper.ai_helper import can_perform_ai_request, AiCallbackHandler
+from cookbook.helper.ai_runtime import (AiRuntimeBadRequest as BadRequestError, AiRuntimeTimeout as LitellmTimeout,
+                                               RUNTIME_CODEX, codex_logout, completion, provider_runtime,
+                                               provider_runtime_status, start_codex_device_login, test_provider_runtime)
 from cookbook.helper.batch_edit_helper import add_to_relation, remove_from_relation, remove_all_from_relation, set_relation
 from cookbook.helper.image_processing import handle_image
 from cookbook.helper.ingredient_parser import IngredientParser
@@ -825,6 +826,43 @@ class AiProviderViewSet(LoggingMixin, viewsets.ModelViewSet, DeleteRelationMixin
     permission_classes = [CustomAiProviderPermission & CustomTokenHasReadWriteScope]
     pagination_class = DefaultPagination
 
+
+    @decorators.action(detail=True, methods=['GET'])
+    def runtime_status(self, request, pk=None):
+        provider = self.get_object()
+        login_id = request.query_params.get('login_id')
+        return Response(provider_runtime_status(provider, login_id=login_id))
+
+    @decorators.action(detail=True, methods=['POST'])
+    def codex_login(self, request, pk=None):
+        provider = self.get_object()
+        if provider_runtime(provider) != RUNTIME_CODEX:
+            return Response({'error': 'This provider does not use the Codex runtime.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            return Response(start_codex_device_login())
+        except Exception as err:
+            traceback.print_exc()
+            return Response({'error': str(err)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @decorators.action(detail=True, methods=['POST'])
+    def codex_logout(self, request, pk=None):
+        provider = self.get_object()
+        if provider_runtime(provider) != RUNTIME_CODEX:
+            return Response({'error': 'This provider does not use the Codex runtime.'}, status=status.HTTP_400_BAD_REQUEST)
+        codex_logout()
+        return Response({'ok': True})
+
+    @decorators.action(detail=True, methods=['POST'])
+    def runtime_test(self, request, pk=None):
+        provider = self.get_object()
+        try:
+            return Response(test_provider_runtime(provider))
+        except (BadRequestError, LitellmTimeout) as err:
+            return Response({'error': getattr(err, 'message', str(err))}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as err:
+            traceback.print_exc()
+            return Response({'error': str(err)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     def get_queryset(self):
         # read only access to all space and global AiProviders
         with scopes_disabled():
@@ -1230,14 +1268,18 @@ class FoodViewSet(LoggingMixin, TreeMixin, DeleteRelationMixing):
                 }
                 return Response(response, status=status.HTTP_400_BAD_REQUEST)
 
-            if not can_perform_ai_request(request.space):
+            ai_provider = AiProvider.objects.filter(pk=request.query_params.get('provider')).filter(Q(space=request.space) | Q(space__isnull=True)).first()
+
+            if ai_provider is None:
+                return Response({'error': True, 'msg': _('AI provider not found.')}, status=status.HTTP_404_NOT_FOUND)
+
+            if not can_perform_ai_request(request.space, ai_provider):
                 response = {
                     'error': True,
                     'msg': _("You don't have any credits remaining to use AI or AI features are not enabled for your space."),
                 }
                 return Response(response, status=status.HTTP_400_BAD_REQUEST)
 
-            ai_provider = AiProvider.objects.filter(pk=request.query_params.get('provider')).filter(Q(space=request.space) | Q(space__isnull=True)).first()
 
             litellm.callbacks = [AiCallbackHandler(request.space, request.user, ai_provider, AiLog.F_FOOD_PROPERTIES)]
 
@@ -2047,14 +2089,18 @@ class RecipeViewSet(LoggingMixin, viewsets.ModelViewSet, DeleteRelationMixing):
                 }
                 return Response(response, status=status.HTTP_400_BAD_REQUEST)
 
-            if not can_perform_ai_request(request.space):
+            ai_provider = AiProvider.objects.filter(pk=request.query_params.get('provider')).filter(Q(space=request.space) | Q(space__isnull=True)).first()
+
+            if ai_provider is None:
+                return Response({'error': True, 'msg': _('AI provider not found.')}, status=status.HTTP_404_NOT_FOUND)
+
+            if not can_perform_ai_request(request.space, ai_provider):
                 response = {
                     'error': True,
                     'msg': _("You don't have any credits remaining to use AI or AI features are not enabled for your space."),
                 }
                 return Response(response, status=status.HTTP_400_BAD_REQUEST)
 
-            ai_provider = AiProvider.objects.filter(pk=request.query_params.get('provider')).filter(Q(space=request.space) | Q(space__isnull=True)).first()
 
             litellm.callbacks = [AiCallbackHandler(request.space, request.user, ai_provider, AiLog.F_RECIPE_PROPERTIES)]
 
@@ -2729,14 +2775,18 @@ class AiImportView(APIView):
                 }
                 return Response(RecipeFromSourceResponseSerializer(context={'request': request}).to_representation(response), status=status.HTTP_400_BAD_REQUEST)
 
-            if not can_perform_ai_request(request.space):
+            ai_provider = AiProvider.objects.filter(pk=serializer.validated_data['ai_provider_id']).filter(Q(space=request.space) | Q(space__isnull=True)).first()
+
+            if ai_provider is None:
+                return Response({'error': True, 'msg': _('AI provider not found.')}, status=status.HTTP_404_NOT_FOUND)
+
+            if not can_perform_ai_request(request.space, ai_provider):
                 response = {
                     'error': True,
                     'msg': _("You don't have any credits remaining to use AI or AI features are not enabled for your space."),
                 }
                 return Response(RecipeFromSourceResponseSerializer(context={'request': request}).to_representation(response), status=status.HTTP_400_BAD_REQUEST)
 
-            ai_provider = AiProvider.objects.filter(pk=serializer.validated_data['ai_provider_id']).filter(Q(space=request.space) | Q(space__isnull=True)).first()
 
             litellm.callbacks = [AiCallbackHandler(request.space, request.user, ai_provider, AiLog.F_FILE_IMPORT)]
 
@@ -2896,14 +2946,18 @@ class AiStepSortView(APIView):
                 }
                 return Response(response, status=status.HTTP_400_BAD_REQUEST)
 
-            if not can_perform_ai_request(request.space):
+            ai_provider = AiProvider.objects.filter(pk=request.query_params.get('provider')).filter(Q(space=request.space) | Q(space__isnull=True)).first()
+
+            if ai_provider is None:
+                return Response({'error': True, 'msg': _('AI provider not found.')}, status=status.HTTP_404_NOT_FOUND)
+
+            if not can_perform_ai_request(request.space, ai_provider):
                 response = {
                     'error': True,
                     'msg': _("You don't have any credits remaining to use AI or AI features are not enabled for your space."),
                 }
                 return Response(response, status=status.HTTP_400_BAD_REQUEST)
 
-            ai_provider = AiProvider.objects.filter(pk=request.query_params.get('provider')).filter(Q(space=request.space) | Q(space__isnull=True)).first()
 
             litellm.callbacks = [AiCallbackHandler(request.space, request.user, ai_provider, AiLog.F_STEP_SORT)]
 

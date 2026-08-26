@@ -426,7 +426,7 @@ def start_codex_device_login() -> dict[str, Any]:
     job_dir = _make_job_dir()
     env = _worker_base_env(job_dir)
     payload = {"action": "codex_login", "login_id": login_id, "status_file": str(state_file), "job_dir": job_dir}
-    subprocess.Popen(
+    proc = subprocess.Popen(
         _worker_command(),
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
@@ -436,7 +436,11 @@ def start_codex_device_login() -> dict[str, Any]:
         env=env,
         start_new_session=True,
         **_subprocess_identity_kwargs(),
-    ).communicate(json.dumps(payload), timeout=1)
+    )
+    if proc.stdin is None:
+        raise AiRuntimeError('Unable to start Codex login worker.')
+    proc.stdin.write(json.dumps(payload))
+    proc.stdin.close()
 
     # The worker writes the device code immediately, then keeps waiting detached.
     deadline = time.monotonic() + 8
