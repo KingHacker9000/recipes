@@ -180,7 +180,7 @@ function initializeEditor() {
     }).catch(() => { initializing.value = false })
 }
 
-async function runtimeRequest(action: string, method: 'GET' | 'POST' = 'GET', body?: object) {
+async function runtimeRequest(action: string, method: 'GET' | 'POST' = 'GET', body?: object, query?: URLSearchParams) {
     if (!editingObj.value.id) throw new Error('Save the provider before configuring its runtime.')
     const headers: Record<string, string> = {'Accept': 'application/json'}
     if (method !== 'GET') {
@@ -188,7 +188,9 @@ async function runtimeRequest(action: string, method: 'GET' | 'POST' = 'GET', bo
         const csrf = getCookie('csrftoken')
         if (csrf) headers['X-CSRFToken'] = csrf
     }
-    const response = await fetch(`/api/ai-provider/${editingObj.value.id}/${action}/`, {
+    const queryString = query?.toString()
+    const url = `/api/ai-provider/${editingObj.value.id}/${action}/${queryString ? `?${queryString}` : ''}`
+    const response = await fetch(url, {
         method,
         credentials: 'same-origin',
         headers,
@@ -203,8 +205,9 @@ async function loadRuntimeStatus() {
     if (!isUpdate() || runtime.value === 'litellm') return
     try {
         const loginId = runtimeStatus.value?.login?.id
-        const suffix = loginId ? `?login_id=${encodeURIComponent(loginId)}` : ''
-        runtimeStatus.value = await runtimeRequest(`runtime_status/${suffix}`)
+        const query = new URLSearchParams()
+        if (loginId) query.set('login_id', loginId)
+        runtimeStatus.value = await runtimeRequest('runtime_status', 'GET', undefined, query)
         if (runtimeStatus.value?.login?.status === 'connected') {
             runtimeStatus.value.connected = true
             runtimeMessage.value = 'ChatGPT sign-in complete.'
