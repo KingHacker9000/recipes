@@ -1,0 +1,74 @@
+name: Publish Fork Docker Image
+
+on:
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-fork-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Publish amd64 + arm64 image
+    if: github.repository == 'KingHacker9000/recipes'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: yarn
+          cache-dependency-path: vue3/yarn.lock
+
+      - name: Build Vue frontend
+        working-directory: ./vue3
+        run: |
+          yarn install --frozen-lockfile
+          yarn build
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/kinghacker9000/recipes
+          tags: |
+            type=raw,value=develop
+            type=sha,prefix=sha-,format=long
+          labels: |
+            org.opencontainers.image.source=https://github.com/KingHacker9000/recipes
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Build and push production image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          pull: true
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
