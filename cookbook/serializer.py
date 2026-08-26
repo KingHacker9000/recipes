@@ -27,6 +27,8 @@ from rest_framework.fields import IntegerField
 from cookbook.helper.CustomStorageClass import CachedS3Boto3Storage
 from cookbook.helper.HelperFunctions import str2bool
 from cookbook.helper.ai_helper import get_monthly_token_usage
+from cookbook.helper.ai_runtime import (RUNTIME_CLAUDE, RUNTIME_CODEX, encrypt_subscription_token,
+                                                provider_runtime, subscription_token_present)
 from cookbook.helper.image_processing import is_file_type_allowed
 from cookbook.helper.permission_helper import above_space_limit, create_space_for_user, get_household_user_ids
 from cookbook.helper.property_helper import FoodPropertyHelper
@@ -353,7 +355,7 @@ class UserFileViewSerializer(serializers.ModelSerializer):
 
 
 class AiProviderSerializer(serializers.ModelSerializer):
-    api_key = serializers.CharField(required=False, write_only=True)
+    api_key = serializers.CharField(required=False, write_only=True, allow_blank=True)
 
     def create(self, validated_data):
         validated_data = self.handle_global_space_logic(validated_data)
@@ -383,6 +385,31 @@ class AiProviderSerializer(serializers.ModelSerializer):
             del validated_data['log_credit_cost']
 
         return validated_data
+
+    def validate(self, attrs):
+        model_name = attrs.get('model_name', getattr(self.instance, 'model_name', ''))
+        runtime = provider_runtime(model_name)
+
+        if runtime == RUNTIME_CODEX:
+            # Codex owns its refreshable ChatGPT credential in the isolated runtime
+            # directory. Never duplicate it into the database.
+            attrs['api_key'] = ''
+            attrs['url'] = None
+            attrs['log_credit_cost'] = False
+
+        elif runtime == RUNTIME_CLAUDE:
+            token = (attrs.get('api_key') or '').strip()
+            existing_is_claude = self.instance is not None and provider_runtime(self.instance.model_name) == RUNTIME_CLAUDE
+            if token:
+                attrs['api_key'] = encrypt_subscription_token(token)
+            elif existing_is_claude and subscription_token_present(self.instance.api_key):
+                attrs.pop('api_key', None)
+            else:
+                raise ValidationError(_('A Claude setup token is required. Generate one with `claude setup-token`.'))
+            attrs['url'] = None
+            attrs['log_credit_cost'] = False
+
+        return super().validate(attrs)
 
     class Meta:
         model = AiProvider

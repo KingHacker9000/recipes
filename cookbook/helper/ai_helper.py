@@ -4,6 +4,7 @@ from django.utils import timezone
 from django.db.models import Sum
 from litellm import CustomLogger
 
+from cookbook.helper.ai_runtime import is_subscription_provider
 from cookbook.models import AiLog
 from recipes import settings
 
@@ -25,8 +26,17 @@ def has_monthly_token(space):
     return get_monthly_token_usage(space) < space.ai_credits_monthly
 
 
-def can_perform_ai_request(space):
-    return (has_monthly_token(space) or space.ai_credits_balance > 0) and space.ai_enabled
+def can_perform_ai_request(space, ai_provider=None):
+    """Check whether an AI request may run.
+
+    Subscription-backed Codex/Claude providers do not consume Tandoor credits,
+    but the Space-level AI kill switch still applies to every runtime.
+    """
+    if not space.ai_enabled:
+        return False
+    if ai_provider is not None and is_subscription_provider(ai_provider):
+        return True
+    return has_monthly_token(space) or space.ai_credits_balance > 0
 
 
 class AiCallbackHandler(CustomLogger):
@@ -55,12 +65,13 @@ class AiCallbackHandler(CustomLogger):
         self.create_ai_log(kwargs, response_obj, start_time, end_time)
 
     def create_ai_log(self, kwargs, response_obj, start_time, end_time):
+        subscription_provider = is_subscription_provider(self.ai_provider)
         credit_cost = 0
         credits_from_balance = False
-        if self.ai_provider.log_credit_cost:
+        if self.ai_provider.log_credit_cost and not subscription_provider:
             credit_cost = kwargs.get("response_cost", 0) * 100
 
-        if (not has_monthly_token(self.space)) and self.space.ai_credits_balance > 0:
+        if not subscription_provider and (not has_monthly_token(self.space)) and self.space.ai_credits_balance > 0:
             remaining_balance = self.space.ai_credits_balance - Decimal(str(credit_cost))
             if remaining_balance < 0:
                 remaining_balance = 0
