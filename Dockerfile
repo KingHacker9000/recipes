@@ -1,7 +1,7 @@
 FROM python:3.13-alpine3.23
 
 #Install all dependencies.
-RUN apk add --no-cache postgresql-libs postgresql-client gettext zlib libjpeg libwebp libxml2-dev libxslt-dev openldap git libgcc libstdc++ nginx tini envsubst nodejs npm ripgrep
+RUN apk add --no-cache postgresql-libs postgresql-client gettext zlib libjpeg libwebp libxml2-dev libxslt-dev openldap git libgcc libstdc++ nginx tini envsubst nodejs npm ripgrep poppler-utils
 
 # Dedicated unprivileged identity and private credential root for subscription AI runtimes.
 # Deployments should mount a private persistent volume/bind at /var/lib/tandoor-ai;
@@ -12,6 +12,9 @@ RUN addgroup -S aiagent && adduser -S -D -H -G aiagent -h /var/lib/tandoor-ai ai
 # Claude's Python SDK is installed with the Python requirements. On Alpine we use
 # the official native/musl Claude Code npm package explicitly as its CLI runtime.
 RUN npm install -g @anthropic-ai/claude-code@2.1.238 && claude --version
+
+# PDF AI imports are rasterized into private, one-shot PNG page attachments.
+RUN pdftoppm -v
 
 ENV AI_RUNTIME_DATA_DIR=/var/lib/tandoor-ai \
     CLAUDE_CLI_PATH=/usr/local/bin/claude

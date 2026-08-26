@@ -5,6 +5,7 @@ on:
     branches:
       - develop
       - feature/subscription-ai-runtimes
+      - feature/subscription-ai-multimodal
     paths:
       - cookbook/helper/ai_runtime.py
       - cookbook/helper/ai_runtime_worker.py
@@ -47,7 +48,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libsasl2-dev python3-dev libxml2-dev libxmlsec1-dev libxslt1-dev \
             libxmlsec1-openssl libldap2-dev libssl-dev gcc libpq-dev zlib1g-dev \
-            libjpeg-dev libwebp-dev libffi-dev cargo g++ curl
+            libjpeg-dev libwebp-dev libffi-dev cargo g++ curl poppler-utils
 
       - uses: actions/setup-python@v6
         with:
@@ -69,14 +70,17 @@ jobs:
             cookbook/serializer.py \
             cookbook/views/api.py
 
-      - name: Verify SDK imports
+      - name: Verify SDK imports and multimodal input types
         run: |
           python - <<'PY'
           import openai_codex
           import claude_agent_sdk
+          from openai_codex import LocalImageInput, TextInput
           print('Codex SDK:', openai_codex.__file__)
           print('Claude Agent SDK:', claude_agent_sdk.__file__)
+          print('Codex multimodal:', TextInput('ok'), LocalImageInput('/tmp/example.png'))
           PY
+          pdftoppm -v
 
       - name: Run subscription runtime tests
         env:

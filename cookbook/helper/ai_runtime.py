@@ -1,9 +1,13 @@
 """AI runtime dispatch for Tandoor.
 
-LiteLLM remains the default and is passed through unchanged.  Model names with
+LiteLLM remains the default and is passed through unchanged. Model names with
 ``codex/`` or ``claude-code/`` prefixes are executed by a deliberately isolated
 worker process so subscription credentials never need to become API keys and the
 agent runtimes do not inherit Tandoor's database/application environment.
+
+The subscription runtimes intentionally accept the same message shape Tandoor
+already sends to LiteLLM, including inline image/PDF data URLs. Attachments are
+validated here, then materialized only inside a private one-shot worker directory.
 """
 
 from __future__ import annotations
@@ -37,6 +41,9 @@ RUNTIME_CLAUDE = "claude-code"
 SUBSCRIPTION_RUNTIMES = {RUNTIME_CODEX, RUNTIME_CLAUDE}
 TOKEN_PREFIX = "tandoor-ai:v1:"
 DEFAULT_TIMEOUT_SECONDS = 180
+MAX_ATTACHMENTS = 8
+MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+MAX_TOTAL_ATTACHMENT_BYTES = 40 * 1024 * 1024
 
 
 class AiRuntimeError(RuntimeError):
@@ -95,8 +102,6 @@ def decrypt_subscription_token(value: str | None) -> str | None:
     value = str(value or "")
     if not value:
         return None
-    # Backward-compatible during development: an old plaintext setup token can
-    # still be consumed once, but every serializer write stores encrypted form.
     if not value.startswith(TOKEN_PREFIX):
         return value
     try:
@@ -220,33 +225,88 @@ def codex_connected() -> bool:
         return False
 
 
-def _flatten_messages(messages: list[dict[str, Any]]) -> str:
+def _decode_data_url(value: Any) -> dict[str, str]:
+    """Validate a LiteLLM-style inline attachment and return a compact worker payload."""
+    if isinstance(value, dict):
+        value = value.get("url")
+    if not isinstance(value, str) or not value.startswith("data:"):
+        raise AiRuntimeBadRequest(
+            "Codex/Claude attachment inputs must be inline data URLs; remote URLs are not fetched by the agent runtime."
+        )
+    try:
+        header, encoded = value.split(",", 1)
+        metadata = header[5:].split(";")
+        mime_type = (metadata[0] or "application/octet-stream").lower()
+        if "base64" not in metadata[1:]:
+            raise ValueError("attachment is not base64 encoded")
+        raw = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError) as exc:
+        raise AiRuntimeBadRequest("The AI attachment is not a valid base64 data URL.") from exc
+
+    if not (mime_type.startswith("image/") or mime_type == "application/pdf"):
+        raise AiRuntimeBadRequest(
+            f"Unsupported AI attachment type: {mime_type}. Codex/Claude currently accept images and PDFs."
+        )
+    if len(raw) > MAX_ATTACHMENT_BYTES:
+        raise AiRuntimeBadRequest(
+            f"AI attachment is too large ({len(raw)} bytes); limit is {MAX_ATTACHMENT_BYTES} bytes per file."
+        )
+    return {"mime_type": mime_type, "data": encoded, "size": str(len(raw))}
+
+
+def _normalize_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, str]]]:
+    """Flatten roles/text while preserving multimodal attachments for the isolated worker."""
     parts: list[str] = []
+    attachments: list[dict[str, str]] = []
+    total_bytes = 0
+
     for message in messages or []:
         role = str(message.get("role", "user")).upper()
         content = message.get("content", "")
         chunks: list[str] = []
+
         if isinstance(content, str):
             chunks.append(content)
         elif isinstance(content, list):
             for item in content:
                 if not isinstance(item, dict):
                     continue
-                item_type = item.get("type")
-                if item_type == "image_url":
-                    raise AiRuntimeBadRequest(
-                        "Image/PDF import is not yet supported by Codex or Claude subscription runtimes. "
-                        "Use a LiteLLM/API provider for file import."
-                    )
-                if item_type == "text":
+                item_type = str(item.get("type") or "")
+                if item_type in {"text", "input_text"}:
                     chunks.append(str(item.get("text", "")))
+                elif item_type in {"image_url", "input_image", "image"}:
+                    source = item.get("image_url", item.get("url", item.get("source")))
+                    attachment = _decode_data_url(source)
+                    total_bytes += int(attachment["size"])
+                    attachment["index"] = str(len(attachments) + 1)
+                    attachments.append(attachment)
+                    chunks.append(f"[ATTACHMENT {attachment['index']}: {attachment['mime_type']}]")
+                elif item_type in {"file", "input_file"}:
+                    source = item.get("file_data", item.get("data", item.get("url")))
+                    attachment = _decode_data_url(source)
+                    total_bytes += int(attachment["size"])
+                    attachment["index"] = str(len(attachments) + 1)
+                    attachments.append(attachment)
+                    chunks.append(f"[ATTACHMENT {attachment['index']}: {attachment['mime_type']}]")
+
         parts.append(f"[{role}]\n" + "\n".join(chunks))
-    return "\n\n".join(parts).strip()
+
+    if len(attachments) > MAX_ATTACHMENTS:
+        raise AiRuntimeBadRequest(f"Too many AI attachments ({len(attachments)}); limit is {MAX_ATTACHMENTS}.")
+    if total_bytes > MAX_TOTAL_ATTACHMENT_BYTES:
+        raise AiRuntimeBadRequest(
+            f"AI attachments are too large in total ({total_bytes} bytes); limit is {MAX_TOTAL_ATTACHMENT_BYTES} bytes."
+        )
+
+    return "\n\n".join(parts).strip(), attachments
+
+
+def _flatten_messages(messages: list[dict[str, Any]]) -> str:
+    """Backward-compatible text-only view used by older tests/callers."""
+    return _normalize_messages(messages)[0]
 
 
 def _json_schema(response_format: Any) -> dict[str, Any]:
-    # Current Tandoor AI calls request a generic JSON object. Keep the worker
-    # contract explicit so both SDKs are forced toward machine-readable output.
     if isinstance(response_format, dict):
         if response_format.get("type") == "json_schema":
             schema = response_format.get("json_schema", {}).get("schema") or response_format.get("schema")
@@ -266,6 +326,7 @@ def _worker_base_env(job_dir: str) -> dict[str, str]:
         "TERM": "dumb",
         "PYTHONUNBUFFERED": "1",
         "AI_RUNTIME_DATA_DIR": str(runtime_data_dir()),
+        "AI_RUNTIME_MAX_PDF_PAGES": os.environ.get("AI_RUNTIME_MAX_PDF_PAGES", "20"),
         "CODEX_HOME": str(codex_home()),
         "CLAUDE_CONFIG_DIR": os.path.join(job_dir, ".claude"),
         "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
@@ -348,8 +409,6 @@ class AiRuntimeResponse(dict):
 
 
 def _log_subscription_result(response: AiRuntimeResponse, started: datetime, ended: datetime) -> None:
-    # Existing Tandoor accounting is implemented as a LiteLLM callback. Subscription
-    # jobs cost zero Tandoor credits but should still appear in AiLog.
     for callback in list(getattr(litellm, "callbacks", []) or []):
         create_log = getattr(callback, "create_ai_log", None)
         if callable(create_log):
@@ -367,9 +426,9 @@ def completion(**kwargs: Any):
         except LiteLLMBadRequest as exc:
             raise AiRuntimeBadRequest(getattr(exc, "message", str(exc))) from exc
 
-    prompt = _flatten_messages(kwargs.get("messages") or [])
-    if not prompt:
-        raise AiRuntimeBadRequest("The AI request contained no text prompt.")
+    prompt, attachments = _normalize_messages(kwargs.get("messages") or [])
+    if not prompt and not attachments:
+        raise AiRuntimeBadRequest("The AI request contained no prompt or attachment.")
 
     credential = None
     if runtime == RUNTIME_CLAUDE:
@@ -384,6 +443,7 @@ def completion(**kwargs: Any):
         "runtime": runtime,
         "model": runtime_model(model),
         "prompt": prompt,
+        "attachments": attachments,
         "schema": _json_schema(kwargs.get("response_format")),
     }
     started = datetime.now().astimezone()
@@ -409,8 +469,11 @@ def provider_runtime_status(provider, login_id: str | None = None) -> dict[str, 
             state = runtime_data_dir() / "logins" / f"{login_id}.json"
             try:
                 login = json.loads(state.read_text(encoding="utf-8"))
-                # Never return filesystem details or credentials.
-                result["login"] = {k: login.get(k) for k in ("id", "status", "verification_url", "user_code", "error") if login.get(k) is not None}
+                result["login"] = {
+                    k: login.get(k)
+                    for k in ("id", "status", "verification_url", "user_code", "error")
+                    if login.get(k) is not None
+                }
             except (OSError, json.JSONDecodeError):
                 result["login"] = {"id": login_id, "status": "starting"}
     elif runtime == RUNTIME_CLAUDE:
@@ -425,7 +488,12 @@ def start_codex_device_login() -> dict[str, Any]:
     state_file = login_dir / f"{login_id}.json"
     job_dir = _make_job_dir()
     env = _worker_base_env(job_dir)
-    payload = {"action": "codex_login", "login_id": login_id, "status_file": str(state_file), "job_dir": job_dir}
+    payload = {
+        "action": "codex_login",
+        "login_id": login_id,
+        "status_file": str(state_file),
+        "job_dir": job_dir,
+    }
     proc = subprocess.Popen(
         _worker_command(),
         stdin=subprocess.PIPE,
@@ -438,16 +506,19 @@ def start_codex_device_login() -> dict[str, Any]:
         **_subprocess_identity_kwargs(),
     )
     if proc.stdin is None:
-        raise AiRuntimeError('Unable to start Codex login worker.')
+        raise AiRuntimeError("Unable to start Codex login worker.")
     proc.stdin.write(json.dumps(payload))
     proc.stdin.close()
 
-    # The worker writes the device code immediately, then keeps waiting detached.
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
         try:
             state = json.loads(state_file.read_text(encoding="utf-8"))
-            return {k: state.get(k) for k in ("id", "status", "verification_url", "user_code", "error") if state.get(k) is not None}
+            return {
+                k: state.get(k)
+                for k in ("id", "status", "verification_url", "user_code", "error")
+                if state.get(k) is not None
+            }
         except (OSError, json.JSONDecodeError):
             time.sleep(0.1)
     return {"id": login_id, "status": "starting"}
