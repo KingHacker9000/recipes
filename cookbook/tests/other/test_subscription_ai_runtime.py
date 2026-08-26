@@ -17,6 +17,7 @@ from cookbook.helper.ai_runtime_worker import (
     _claude_prompt_stream,
     _coerce_json,
     _materialize_attachments,
+    _prepare_output_schema,
     _token_usage,
 )
 from cookbook.serializer import AiProviderSerializer
@@ -183,6 +184,48 @@ def test_claude_stream_contains_multimodal_content():
     assert content[1]['type'] == 'image'
     assert content[1]['source']['type'] == 'base64'
     assert content[1]['source']['media_type'] == 'image/png'
+
+
+def test_generic_json_object_schema_disables_strict_structured_output():
+    assert _prepare_output_schema({
+        'type': 'object',
+        'additionalProperties': True,
+    }) is None
+
+
+def test_real_schema_is_recursively_hardened_for_strict_providers():
+    schema = {
+        'type': 'object',
+        'properties': {
+            'name': {'type': 'string'},
+            'details': {
+                'type': 'object',
+                'properties': {
+                    'servings': {'type': 'integer'},
+                },
+            },
+            'steps': {
+                'type': 'array',
+                'items': {
+                    'type': 'object',
+                    'properties': {
+                        'text': {'type': 'string'},
+                    },
+                },
+            },
+        },
+    }
+
+    strict = _prepare_output_schema(schema)
+
+    assert strict['additionalProperties'] is False
+    assert strict['required'] == ['name', 'details', 'steps']
+    assert strict['properties']['details']['additionalProperties'] is False
+    assert strict['properties']['details']['required'] == ['servings']
+    step_schema = strict['properties']['steps']['items']
+    assert step_schema['additionalProperties'] is False
+    assert step_schema['required'] == ['text']
+    assert 'additionalProperties' not in schema
 
 
 def test_codex_completion_uses_isolated_worker_contract_with_attachment(monkeypatch):
