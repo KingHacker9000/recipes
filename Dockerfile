@@ -3,15 +3,16 @@ FROM python:3.13-alpine3.23
 #Install all dependencies.
 RUN apk add --no-cache postgresql-libs postgresql-client gettext zlib libjpeg libwebp libxml2-dev libxslt-dev openldap git libgcc libstdc++ nginx tini envsubst nodejs npm ripgrep
 
-# Dedicated unprivileged identity and persistent credential root for subscription AI runtimes.
-RUN addgroup -S aiagent && adduser -S -D -H -G aiagent -h /var/lib/tandoor-ai aiagent && \
-    install -d -m 0700 -o aiagent -g aiagent /var/lib/tandoor-ai
+# Dedicated unprivileged identity for subscription AI workers.
+RUN addgroup -S aiagent && adduser -S -D -H -G aiagent -h /var/lib/tandoor-ai aiagent
 
 # Claude's Python SDK is installed with the Python requirements. On Alpine we use
 # the official native/musl Claude Code npm package explicitly as its CLI runtime.
 RUN npm install -g @anthropic-ai/claude-code@2.1.238 && claude --version
 
-ENV AI_RUNTIME_DATA_DIR=/var/lib/tandoor-ai \
+# Keep subscription credentials in Tandoor's normal persistent media volume by
+# default. Deployments with a custom MEDIA_ROOT can override AI_RUNTIME_DATA_DIR.
+ENV AI_RUNTIME_DATA_DIR=/opt/recipes/mediafiles/.ai-runtime \
     CLAUDE_CLI_PATH=/usr/local/bin/claude
 
 #Print all logs without buffering it.
