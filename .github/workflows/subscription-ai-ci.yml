@@ -1,0 +1,110 @@
+name: Subscription AI CI
+
+on:
+  push:
+    branches:
+      - develop
+      - feature/subscription-ai-runtimes
+    paths:
+      - cookbook/helper/ai_runtime.py
+      - cookbook/helper/ai_runtime_worker.py
+      - cookbook/helper/ai_helper.py
+      - cookbook/management/commands/ai_codex_login.py
+      - cookbook/serializer.py
+      - cookbook/views/api.py
+      - cookbook/tests/other/test_subscription_ai_runtime.py
+      - vue3/src/components/model_editors/AiProviderEditor.vue
+      - requirements.txt
+      - Dockerfile
+      - .github/workflows/subscription-ai-ci.yml
+  pull_request:
+    branches: [develop]
+    paths:
+      - cookbook/helper/ai_runtime.py
+      - cookbook/helper/ai_runtime_worker.py
+      - cookbook/helper/ai_helper.py
+      - cookbook/management/commands/ai_codex_login.py
+      - cookbook/serializer.py
+      - cookbook/views/api.py
+      - cookbook/tests/other/test_subscription_ai_runtime.py
+      - vue3/src/components/model_editors/AiProviderEditor.vue
+      - requirements.txt
+      - Dockerfile
+      - .github/workflows/subscription-ai-ci.yml
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-and-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install native Python build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libsasl2-dev python3-dev libxml2-dev libxmlsec1-dev libxslt1-dev \
+            libxmlsec1-openssl libldap2-dev libssl-dev gcc libpq-dev zlib1g-dev \
+            libjpeg-dev libwebp-dev libffi-dev cargo g++ curl
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile modified Python surfaces
+        run: |
+          python -m compileall -q \
+            cookbook/helper/ai_runtime.py \
+            cookbook/helper/ai_runtime_worker.py \
+            cookbook/helper/ai_helper.py \
+            cookbook/management/commands/ai_codex_login.py \
+            cookbook/serializer.py \
+            cookbook/views/api.py
+
+      - name: Verify SDK imports
+        run: |
+          python - <<'PY'
+          import openai_codex
+          import claude_agent_sdk
+          print('Codex SDK:', openai_codex.__file__)
+          print('Claude Agent SDK:', claude_agent_sdk.__file__)
+          PY
+
+      - name: Run subscription runtime tests
+        env:
+          DISABLE_EXTERNAL_CONNECTORS: '1'
+        run: |
+          pytest -o addopts='' cookbook/tests/other/test_subscription_ai_runtime.py -q
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: yarn
+          cache-dependency-path: vue3/yarn.lock
+
+      - name: Build Vue frontend
+        working-directory: vue3
+        run: |
+          yarn install --frozen-lockfile
+          yarn build
+
+  alpine-multiplatform-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build production Alpine image for x86-64 and Pi ARM64
+        run: |
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --progress=plain \
+            .
