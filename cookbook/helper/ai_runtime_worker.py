@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import sys
 import traceback
 from pathlib import Path
@@ -164,6 +165,16 @@ def _codex_login(payload: dict[str, Any]) -> dict[str, Any]:
         state.update({"status": "failed", "error": str(exc)})
         _write_status(status_file, state)
         raise
+    finally:
+        # Device login is intentionally detached from the web request. Remove its
+        # private HOME/workspace when authorization completes so repeated logins do
+        # not accumulate directories. CODEX_HOME is separate and remains persistent.
+        if payload.get("job_dir"):
+            try:
+                os.chdir("/tmp")
+            except OSError:
+                pass
+            shutil.rmtree(job_dir, ignore_errors=True)
 
 
 async def _claude_complete_async(payload: dict[str, Any]) -> dict[str, Any]:
