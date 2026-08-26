@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand, CommandError
 
-from cookbook.helper.ai_runtime import codex_connected, provider_runtime_status, start_codex_device_login
+from cookbook.helper.ai_runtime import codex_connected, start_codex_device_login
 
 
 class Command(BaseCommand):
