@@ -65,12 +65,13 @@ class AiCallbackHandler(CustomLogger):
         self.create_ai_log(kwargs, response_obj, start_time, end_time)
 
     def create_ai_log(self, kwargs, response_obj, start_time, end_time):
+        subscription_provider = is_subscription_provider(self.ai_provider)
         credit_cost = 0
         credits_from_balance = False
-        if self.ai_provider.log_credit_cost:
+        if self.ai_provider.log_credit_cost and not subscription_provider:
             credit_cost = kwargs.get("response_cost", 0) * 100
 
-        if (not has_monthly_token(self.space)) and self.space.ai_credits_balance > 0:
+        if not subscription_provider and (not has_monthly_token(self.space)) and self.space.ai_credits_balance > 0:
             remaining_balance = self.space.ai_credits_balance - Decimal(str(credit_cost))
             if remaining_balance < 0:
                 remaining_balance = 0
