@@ -159,7 +159,10 @@ async function queueImport() {
             body: JSON.stringify({source_url: url}),
         })
         sourceUrl.value = ''
-        jobs.value.unshift(job)
+        window.history.replaceState({}, '', '/recipe/social-inbox')
+        const existingIndex = jobs.value.findIndex(value => value.id === job.id)
+        if (existingIndex >= 0) jobs.value[existingIndex] = job
+        else jobs.value.unshift(job)
         syncDraft(job)
         schedulePoll()
     } catch (err: any) {
@@ -241,10 +244,11 @@ function statusColor(status: string) {
     return 'info'
 }
 
-onMounted(() => {
+onMounted(async () => {
     const query = new URLSearchParams(window.location.search)
     sourceUrl.value = query.get('url') || query.get('text') || ''
-    loadJobs()
+    await loadJobs()
+    if (sourceUrl.value) await queueImport()
 })
 
 onBeforeUnmount(() => {
