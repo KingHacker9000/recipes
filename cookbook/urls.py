@@ -91,9 +91,9 @@ urlpatterns = [
     path('invite/<slug:token>/', views.invite_link, name='view_invite'),
 
     path('system/', views.system, name='view_system'),
-    path('plugin/update/', views.plugin_update, name='plugin_update'),
+    path('plugin/update/', views.plugin_update, name='view_plugin_update'),
 
-    path('abuse/<slug:token>', views.report_share_abuse, name='report_share_abuse'),
+    path('abuse/<slug:token>', views.report_share_abuse, name='view_report_share_abuse'),
 
     path('export-file/<int:pk>/', import_export.export_file, name='view_export_file'),
     # for internal use only
