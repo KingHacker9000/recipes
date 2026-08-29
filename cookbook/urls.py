@@ -91,13 +91,16 @@ urlpatterns = [
     path('invite/<slug:token>/', views.invite_link, name='view_invite'),
 
     path('system/', views.system, name='view_system'),
-    path('plugin/update/', views.plugin_update, name='view_plugin_update'),
+    path('plugin/update/', views.plugin_update, name='plugin_update'),
 
-    path('abuse/<slug:token>', views.report_share_abuse, name='view_report_share_abuse'),
+    path('abuse/<slug:token>', views.report_share_abuse, name='report_share_abuse'),
 
     path('export-file/<int:pk>/', import_export.export_file, name='view_export_file'),
     # for internal use only
     path('view-recipe-pdf/<int:pk>/', views.recipe_pdf_viewer, name='view_recipe_pdf'),
+
+    # Preserve the existing PWA share-target URL while routing supported social links into the inbox.
+    path('recipe/import', social_import.social_share_entry, name='social_share_entry'),
 
     # Tandoor v1 redirects
     path('view/recipe/<int:pk>', views.redirect_recipe_view, name='redirect_recipe_view'),
