@@ -14,6 +14,9 @@ class CookbookConfig(AppConfig):
 
     def ready(self):
         import cookbook.signals  # noqa
+        # SocialImportJob lives in an isolated module to keep the core models file stable.
+        # Import it during app startup so Django registers it for checks/admin tooling.
+        from cookbook.social_import.models import SocialImportJob  # noqa: F401
 
         if not settings.DISABLE_EXTERNAL_CONNECTORS:
             from cookbook.connectors.connector_manager import ConnectorManager  # Needs to be here to prevent loading race condition of oauth2 modules in models.py
