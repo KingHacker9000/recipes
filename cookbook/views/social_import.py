@@ -1,5 +1,8 @@
 import json
+from urllib.parse import urlencode
 
+from django.http import HttpResponseRedirect
+from django.shortcuts import render
 from recipe_scrapers import scrape_html
 from rest_framework import serializers, status
 from rest_framework.response import Response
@@ -12,6 +15,26 @@ from cookbook.serializer import RecipeSerializer
 from cookbook.social_import.acquisition import SocialImportError, canonicalize_url, identify_platform
 from cookbook.social_import.models import SocialImportJob
 from cookbook.social_import.service import normalize_extraction
+
+
+ACTIVE_IMPORT_STATUSES = (
+    SocialImportJob.STATUS_QUEUED,
+    SocialImportJob.STATUS_ACQUIRING,
+    SocialImportJob.STATUS_EXTRACTING,
+    SocialImportJob.STATUS_READY,
+)
+
+
+def social_share_entry(request):
+    """Route installed-PWA social shares into the inbox without breaking normal URL imports."""
+    shared_url = str(request.GET.get('url') or request.GET.get('text') or '').strip()
+    if shared_url:
+        try:
+            identify_platform(shared_url)
+            return HttpResponseRedirect('/recipe/social-inbox?' + urlencode({'url': shared_url}))
+        except SocialImportError:
+            pass
+    return render(request, 'frontend/tandoor.html', {})
 
 
 class SocialImportJobSerializer(serializers.ModelSerializer):
@@ -58,6 +81,18 @@ class SocialImportCollectionView(APIView):
                 provider = None
             if provider is None or provider.space_id not in (None, request.space.id):
                 return Response({'error': True, 'msg': 'AI provider not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        existing = (SocialImportJob.objects
+                    .filter(
+                        canonical_url=canonical,
+                        created_by=request.user,
+                        space=request.space,
+                        status__in=ACTIVE_IMPORT_STATUSES,
+                    )
+                    .order_by('-created_at')
+                    .first())
+        if existing:
+            return Response(SocialImportJobSerializer(existing).data, status=status.HTTP_200_OK)
 
         job = SocialImportJob.objects.create(
             source_url=source_url,
