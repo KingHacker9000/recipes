@@ -2,6 +2,7 @@ from datetime import datetime, time
 from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 
@@ -20,6 +21,20 @@ def _decimal(value, field, *, minimum=None):
     if minimum is not None and result < Decimal(str(minimum)):
         raise AgentHouseholdInputError(f'{field} must be at least {minimum}.')
     return result
+
+
+def accessible_recipe_queryset(request):
+    return (Recipe.objects
+            .filter(space=request.space)
+            .filter(Q(private=False) | Q(created_by=request.user) | Q(shared=request.user))
+            .distinct())
+
+
+def accessible_meal_plan_queryset(request):
+    return (MealPlan.objects
+            .filter(space=request.space)
+            .filter(Q(recipe__isnull=True) | Q(recipe__private=False) | Q(recipe__created_by=request.user) | Q(recipe__shared=request.user))
+            .distinct())
 
 
 def shopping_list_payload(obj):
@@ -182,9 +197,9 @@ def create_meal_plan(request, payload):
 
     recipe = None
     if payload.get('recipe_id') not in (None, ''):
-        recipe = Recipe.objects.filter(pk=payload.get('recipe_id'), space=request.space).first()
+        recipe = accessible_recipe_queryset(request).filter(pk=payload.get('recipe_id')).first()
         if recipe is None:
-            raise AgentHouseholdInputError('recipe_id was not found in the active space.')
+            raise AgentHouseholdInputError('recipe_id was not found or is not accessible to the authenticated user.')
 
     servings = _decimal(payload.get('servings', 1), 'servings', minimum='0.0001')
     from_date = _parse_plan_datetime(payload.get('from_date'), meal_type, 'from_date')
