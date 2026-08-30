@@ -88,6 +88,8 @@ def meal_plan_payload(obj):
         'from_date': obj.from_date.isoformat(),
         'to_date': obj.to_date.isoformat(),
         'created_by_id': obj.created_by_id,
+        'created_at': obj.created_at.isoformat() if obj.created_at else None,
+        'updated_at': obj.updated_at.isoformat() if obj.updated_at else None,
     }
 
 
@@ -190,17 +192,25 @@ def _parse_plan_datetime(value, meal_type, field):
     return dt
 
 
-def create_meal_plan(request, payload):
-    meal_type = MealType.objects.filter(pk=payload.get('meal_type_id'), space=request.space).first()
-    if meal_type is None:
+def _meal_type(meal_type_id, space):
+    obj = MealType.objects.filter(pk=meal_type_id, space=space).first()
+    if obj is None:
         raise AgentHouseholdInputError('meal_type_id was not found in the active space.')
+    return obj
 
-    recipe = None
-    if payload.get('recipe_id') not in (None, ''):
-        recipe = accessible_recipe_queryset(request).filter(pk=payload.get('recipe_id')).first()
-        if recipe is None:
-            raise AgentHouseholdInputError('recipe_id was not found or is not accessible to the authenticated user.')
 
+def _accessible_recipe(request, recipe_id):
+    if recipe_id in (None, ''):
+        return None
+    obj = accessible_recipe_queryset(request).filter(pk=recipe_id).first()
+    if obj is None:
+        raise AgentHouseholdInputError('recipe_id was not found or is not accessible to the authenticated user.')
+    return obj
+
+
+def create_meal_plan(request, payload):
+    meal_type = _meal_type(payload.get('meal_type_id'), request.space)
+    recipe = _accessible_recipe(request, payload.get('recipe_id'))
     servings = _decimal(payload.get('servings', 1), 'servings', minimum='0.0001')
     from_date = _parse_plan_datetime(payload.get('from_date'), meal_type, 'from_date')
     to_value = payload.get('to_date') or payload.get('from_date')
@@ -219,3 +229,32 @@ def create_meal_plan(request, payload):
         created_by=request.user,
         space=request.space,
     )
+
+
+def update_meal_plan(request, obj, payload):
+    expected = str(payload.get('expected_updated_at') or '').strip()
+    if not expected:
+        raise AgentHouseholdInputError('expected_updated_at is required.')
+    if not obj.updated_at or obj.updated_at.isoformat() != expected:
+        raise AgentHouseholdInputError('Meal plan changed since it was read.')
+
+    meal_type = obj.meal_type
+    if 'meal_type_id' in payload:
+        meal_type = _meal_type(payload.get('meal_type_id'), request.space)
+        obj.meal_type = meal_type
+    if 'recipe_id' in payload:
+        obj.recipe = _accessible_recipe(request, payload.get('recipe_id'))
+    if 'servings' in payload:
+        obj.servings = _decimal(payload.get('servings'), 'servings', minimum='0.0001')
+    if 'title' in payload:
+        obj.title = str(payload.get('title') or '')[:64]
+    if 'note' in payload:
+        obj.note = str(payload.get('note') or '')
+    if 'from_date' in payload:
+        obj.from_date = _parse_plan_datetime(payload.get('from_date'), meal_type, 'from_date')
+    if 'to_date' in payload:
+        obj.to_date = _parse_plan_datetime(payload.get('to_date'), meal_type, 'to_date')
+    if obj.to_date < obj.from_date:
+        raise AgentHouseholdInputError('to_date cannot be before from_date.')
+    obj.save()
+    return obj
