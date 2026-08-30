@@ -39,6 +39,30 @@ def test_fdc_profile_parser_uses_verified_per_100g_contract():
     assert result['sodium_mg'] == Decimal('45')
 
 
+def test_fdc_branded_liquid_preserves_100ml_basis():
+    result = nutrition_profile_from_fdc({
+        'fdcId': 222,
+        'dataType': 'Branded',
+        'servingSizeUnit': 'ml',
+        'foodNutrients': [
+            {'nutrient': {'name': 'Energy', 'unitName': 'kcal'}, 'amount': 42},
+        ],
+    })
+    assert result['basis_amount'] == Decimal('100')
+    assert result['basis_unit'] == 'ml'
+    assert result['calories'] == Decimal('42')
+
+
+def test_fdc_branded_ambiguous_basis_is_rejected():
+    with pytest.raises(FoodDataCentralError, match='ambiguous serving-size basis'):
+        nutrition_profile_from_fdc({
+            'fdcId': 333,
+            'dataType': 'Branded',
+            'servingSizeUnit': 'serving',
+            'foodNutrients': [],
+        })
+
+
 def test_fdc_parser_does_not_invent_missing_nutrients():
     result = nutrition_profile_from_fdc({'fdcId': 1, 'foodNutrients': []})
     assert result['calories'] is None
@@ -114,10 +138,13 @@ def test_private_recipe_queryset_hides_unshared_recipe(space_1, u1_s1, u2_s1):
 def test_mcp_registry_has_no_generic_http_or_sql_escape_hatch():
     forbidden = {'fetch', 'http', 'request', 'sql', 'query_database', 'execute_sql'}
     assert not forbidden.intersection(TOOLS)
-    assert 'recipes_search' in TOOLS
-    assert 'pantry_reconcile_preview' in TOOLS
-    assert 'recipe_save_variant' in TOOLS
-    assert 'nutrition_profile_create' in TOOLS
+    for expected in (
+        'recipes_search', 'recipe_create', 'recipe_update', 'recipe_clone',
+        'pantry_locations', 'pantry_reconcile_preview', 'proposal_get',
+        'recipe_save_variant', 'nutrition_profile_create', 'shopping_entry_delete',
+        'meal_plan_add', 'audit_events',
+    ):
+        assert expected in TOOLS
 
 
 @pytest.mark.asyncio
