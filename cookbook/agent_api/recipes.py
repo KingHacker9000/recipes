@@ -90,6 +90,138 @@ def _existing_nested_ids(recipe):
     return step_ids, ingredient_ids
 
 
+def _ingredient_patch_snapshot(ingredient):
+    return {
+        'id': ingredient.id,
+        'food_id': ingredient.food_id,
+        'unit_id': ingredient.unit_id,
+        'amount': ingredient.amount,
+        'note': ingredient.note or '',
+        'order': ingredient.order,
+        'is_header': ingredient.is_header,
+        'no_amount': ingredient.no_amount,
+        'original_text': ingredient.original_text or '',
+    }
+
+
+def _step_patch_snapshot(step):
+    return {
+        'id': step.id,
+        'name': step.name,
+        'instruction': step.instruction,
+        'time': step.time,
+        'order': step.order,
+        'show_as_header': step.show_as_header,
+        'show_ingredients_table': step.show_ingredients_table,
+        'ingredients': [
+            _ingredient_patch_snapshot(ingredient)
+            for ingredient in step.ingredients.all().order_by('order', 'id')
+        ],
+    }
+
+
+def _merge_partial_nested_payload(payload, recipe):
+    """Expand an Agent PATCH into a non-destructive nested serializer payload.
+
+    ``drf-writable-nested`` treats a supplied nested list as the desired complete
+    relation. Passing only the two ingredients an agent wants to edit can
+    therefore delete omitted siblings. Its nested child serializers also do not
+    reliably inherit the parent serializer's partial state. Merge patches onto
+    the current nested objects before validation so omitted fields and siblings
+    remain unchanged while existing IDs are still validated below.
+    """
+    merged = deepcopy(payload)
+    if 'steps' not in merged:
+        return merged
+
+    patches = merged.get('steps')
+    if not isinstance(patches, list):
+        return merged
+
+    current_steps = list(recipe.steps.all().order_by('order', 'id'))
+    current_step_ids = {step.id for step in current_steps}
+    step_patches = {}
+    new_steps = []
+
+    for index, patch in enumerate(patches):
+        if not isinstance(patch, dict):
+            new_steps.append(patch)
+            continue
+        raw_id = patch.get('id')
+        if raw_id in (None, ''):
+            new_steps.append(deepcopy(patch))
+            continue
+        try:
+            step_id = int(raw_id)
+        except (TypeError, ValueError):
+            raise AgentRecipeInputError(f'steps[{index}].id must be an integer.')
+        if step_id not in current_step_ids:
+            raise AgentRecipeInputError(f'steps[{index}].id does not belong to this recipe.')
+        if step_id in step_patches:
+            raise AgentRecipeInputError(f'steps[{index}].id is duplicated in the patch.')
+        step_patches[step_id] = deepcopy(patch)
+
+    result = []
+    for step in current_steps:
+        base = _step_patch_snapshot(step)
+        patch = step_patches.get(step.id)
+        if patch is None:
+            result.append(base)
+            continue
+
+        patch_ingredients = patch.pop('ingredients', None) if 'ingredients' in patch else None
+        base.update(patch)
+
+        if patch_ingredients is not None:
+            if not isinstance(patch_ingredients, list):
+                raise AgentRecipeInputError(f'step {step.id}.ingredients must be a list.')
+
+            current_ingredients = list(step.ingredients.all().order_by('order', 'id'))
+            current_ingredient_ids = {ingredient.id for ingredient in current_ingredients}
+            ingredient_patches = {}
+            new_ingredients = []
+
+            for ingredient_index, ingredient_patch in enumerate(patch_ingredients):
+                if not isinstance(ingredient_patch, dict):
+                    new_ingredients.append(ingredient_patch)
+                    continue
+                raw_id = ingredient_patch.get('id')
+                if raw_id in (None, ''):
+                    new_ingredients.append(deepcopy(ingredient_patch))
+                    continue
+                try:
+                    ingredient_id = int(raw_id)
+                except (TypeError, ValueError):
+                    raise AgentRecipeInputError(
+                        f'step {step.id}.ingredients[{ingredient_index}].id must be an integer.'
+                    )
+                if ingredient_id not in current_ingredient_ids:
+                    raise AgentRecipeInputError(
+                        f'Ingredient {ingredient_id} does not belong to step {step.id}.'
+                    )
+                if ingredient_id in ingredient_patches:
+                    raise AgentRecipeInputError(
+                        f'Ingredient {ingredient_id} is duplicated in the patch for step {step.id}.'
+                    )
+                ingredient_patches[ingredient_id] = deepcopy(ingredient_patch)
+
+            merged_ingredients = []
+            for ingredient in current_ingredients:
+                ingredient_data = _ingredient_patch_snapshot(ingredient)
+                ingredient_patch = ingredient_patches.get(ingredient.id)
+                if ingredient_patch is not None:
+                    ingredient_data.update(ingredient_patch)
+                merged_ingredients.append(ingredient_data)
+            merged_ingredients.extend(new_ingredients)
+            base['ingredients'] = merged_ingredients
+
+        result.append(base)
+
+    result.extend(new_steps)
+    merged['steps'] = result
+    return merged
+
+
 def normalize_recipe_input(payload, space, instance=None, partial=False):
     """Convert a small agent-friendly recipe schema into Tandoor's native serializer schema.
 
@@ -98,6 +230,9 @@ def normalize_recipe_input(payload, space, instance=None, partial=False):
     """
     if not isinstance(payload, dict):
         raise AgentRecipeInputError('recipe must be an object.')
+
+    if partial and instance is not None:
+        payload = _merge_partial_nested_payload(payload, instance)
 
     data = {}
     for field in RECIPE_FIELDS:
@@ -115,7 +250,8 @@ def normalize_recipe_input(payload, space, instance=None, partial=False):
         servings = _decimal(data['servings'], 'servings')
         if servings is None or servings <= 0:
             raise AgentRecipeInputError('servings must be greater than zero.')
-        data['servings'] = servings
+        # CustomDecimalField currently accepts int/float/string input, not Decimal.
+        data['servings'] = float(servings)
 
     if 'keywords' in payload:
         keywords = payload.get('keywords') or []
@@ -178,9 +314,11 @@ def normalize_recipe_input(payload, space, instance=None, partial=False):
                 amount = _decimal(item.get('amount'), f'steps[{step_index}].ingredients[{ingredient_index}].amount')
                 if amount is not None and amount < 0:
                     raise AgentRecipeInputError('Ingredient amount cannot be negative.')
-                normalized_item['amount'] = amount if amount is not None else Decimal('0')
+                # CustomDecimalField currently maps Decimal input to None, which
+                # produced the misleading recipe_update 409 via a DB NOT NULL error.
+                normalized_item['amount'] = float(amount) if amount is not None else 0.0
             else:
-                normalized_item['amount'] = Decimal('0')
+                normalized_item['amount'] = 0.0
 
             normalized_item['food'] = _food_ref(item, space)
             normalized_item['unit'] = _unit_ref(item, space)
