@@ -14,6 +14,30 @@ from cookbook.models import Recipe
 AGENT_PERMISSION = [CustomIsUser & CustomTokenHasReadWriteScope]
 
 
+class AgentCompleteHealthView(APIView):
+    permission_classes = AGENT_PERMISSION
+
+    def get(self, request):
+        return Response({
+            'version': '2026-08-30.v2',
+            'space_id': request.space.id,
+            'capabilities': {
+                'recipes': [
+                    'search', 'get', 'create', 'update', 'clone', 'nutrition_analyze',
+                    'exact_scale_preview', 'practical_scale_preview', 'recommend',
+                    'pantry_check', 'substitution_context', 'variant_preview', 'variant_save',
+                ],
+                'foods': ['search', 'nutrition_profile_read', 'nutrition_profile_write', 'fdc_search', 'fdc_verify'],
+                'nutrition': ['evaluate_draft', 'coverage', 'provenance'],
+                'pantry': ['locations', 'entries', 'adjust_delta', 'reconcile_preview', 'proposal_apply'],
+                'shopping': ['lists', 'entry_create', 'entry_update', 'entry_delete'],
+                'meal_plans': ['meal_types', 'list', 'create', 'delete'],
+                'audit': ['list', 'idempotency'],
+                'mcp': ['semantic_tools', 'stdio', 'authenticated_streamable_http'],
+            },
+        })
+
+
 def _recipe(view, request, pk):
     obj = (Recipe.objects
            .filter(pk=pk, space=request.space)
