@@ -111,7 +111,15 @@ class AgentRecipePantryCheckView(APIView):
         recipe = _recipe_for_request(self, request, pk)
         if recipe is None:
             return Response(status=status.HTTP_404_NOT_FOUND)
-        return Response(check_recipe_against_pantry(recipe, request.space))
+        try:
+            result = check_recipe_against_pantry(
+                recipe,
+                request.space,
+                target_servings=request.data.get('target_servings'),
+            )
+        except AgentPantryInputError as exc:
+            return _input_error(exc)
+        return Response(result)
 
 
 class AgentPantryReconcilePreviewView(APIView):
