@@ -35,9 +35,9 @@ class AgentAuditEvent(models.Model):
     class Meta:
         ordering = ('-created_at',)
         indexes = [
-            models.Index(fields=['space', 'created_at']),
-            models.Index(fields=['created_by', 'created_at']),
-            models.Index(fields=['space', 'action', 'created_at']),
+            models.Index(fields=['space', 'created_at'], name='agent_audit_space_created_idx'),
+            models.Index(fields=['created_by', 'created_at'], name='agent_audit_user_created_idx'),
+            models.Index(fields=['space', 'action', 'created_at'], name='agent_audit_action_created_idx'),
         ]
         constraints = [
             models.UniqueConstraint(
@@ -80,8 +80,8 @@ class AgentProposal(models.Model):
     class Meta:
         ordering = ('-created_at',)
         indexes = [
-            models.Index(fields=['space', 'status', 'created_at']),
-            models.Index(fields=['created_by', 'status', 'created_at']),
+            models.Index(fields=['space', 'status', 'created_at'], name='agent_prop_space_status_idx'),
+            models.Index(fields=['created_by', 'status', 'created_at'], name='agent_prop_user_status_idx'),
         ]
 
 
@@ -146,9 +146,9 @@ class FoodNutritionProfile(models.Model):
     class Meta:
         ordering = ('food_id', '-is_default', '-verified', '-confidence', '-updated_at')
         indexes = [
-            models.Index(fields=['space', 'food']),
-            models.Index(fields=['space', 'barcode']),
-            models.Index(fields=['space', 'source_type']),
+            models.Index(fields=['space', 'food'], name='agent_nutr_food_idx'),
+            models.Index(fields=['space', 'barcode'], name='agent_nutr_barcode_idx'),
+            models.Index(fields=['space', 'source_type'], name='agent_nutr_source_idx'),
         ]
         constraints = [
             models.UniqueConstraint(
@@ -179,5 +179,5 @@ class RecipeVariantLink(models.Model):
     class Meta:
         ordering = ('-created_at',)
         indexes = [
-            models.Index(fields=['space', 'parent_recipe', 'created_at']),
+            models.Index(fields=['space', 'parent_recipe', 'created_at'], name='agent_variant_parent_idx'),
         ]
