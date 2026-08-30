@@ -2,7 +2,6 @@ from copy import deepcopy
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from django.db import transaction
-from rest_framework.exceptions import ValidationError
 
 from cookbook.agent_api.models import RecipeVariantLink
 from cookbook.agent_api.nutrition import ALL_FIELDS, evaluate_draft
@@ -255,6 +254,7 @@ def draft_items_from_recipe_payload(payload):
         for ingredient in step.get('ingredients') or []:
             items.append({
                 'food_id': ingredient.get('food_id'),
+                'food_name': ingredient.get('food_name'),
                 'amount': ingredient.get('amount'),
                 'unit': ingredient.get('unit_name') or ingredient.get('unit') or '',
                 'unit_id': ingredient.get('unit_id'),
@@ -262,15 +262,34 @@ def draft_items_from_recipe_payload(payload):
     return items
 
 
-def _resolve_draft_units(items, space):
+def _resolve_draft_refs(items, space):
+    """Resolve existing food/unit names for preview without creating objects."""
     resolved = []
     for item in items:
         value = dict(item)
+        if value.get('food_id') not in (None, ''):
+            food = Food.objects.filter(pk=value['food_id'], space=space).first()
+            if food is None:
+                raise AgentRecipeInputError(f"Food {value['food_id']} was not found in the active space.")
+            value['food_id'] = food.id
+        elif str(value.get('food_name') or '').strip():
+            food_name = str(value['food_name']).strip()
+            food = Food.objects.filter(name__iexact=food_name, space=space).first()
+            if food is not None:
+                value['food_id'] = food.id
+            else:
+                value['food_id'] = None
+
         if value.get('unit_id') not in (None, ''):
             unit = Unit.objects.filter(pk=value['unit_id'], space=space).first()
             if unit is None:
                 raise AgentRecipeInputError(f"Unit {value['unit_id']} was not found in the active space.")
             value['unit'] = unit.name
+        elif str(value.get('unit') or '').strip():
+            unit_name = str(value['unit']).strip()
+            unit = Unit.objects.filter(name__iexact=unit_name, space=space).first()
+            if unit is not None:
+                value['unit'] = unit.name
         resolved.append(value)
     return resolved
 
@@ -336,7 +355,7 @@ def evaluate_variant_candidate(parent_recipe, candidate, constraints, space):
     if not isinstance(candidate, dict):
         raise AgentRecipeInputError('candidate must be an object.')
     servings = candidate.get('servings', parent_recipe.servings or 1)
-    items = _resolve_draft_units(draft_items_from_recipe_payload(candidate), space)
+    items = _resolve_draft_refs(draft_items_from_recipe_payload(candidate), space)
     analysis = evaluate_draft(items, space)
     per_serving = per_serving_from_analysis(analysis, servings)
     constraint_result = evaluate_macro_constraints(per_serving, analysis['coverage'], constraints)
@@ -354,10 +373,10 @@ def evaluate_variant_candidate(parent_recipe, candidate, constraints, space):
 
 def save_variant_from_agent(request, parent_recipe, candidate, *, constraints=None, variant_type='custom', change_summary=None):
     preview = evaluate_variant_candidate(parent_recipe, candidate, constraints or {}, request.space)
-    if preview['constraints']['checks'] and not preview['constraints']['all_satisfied']:
-        raise AgentRecipeInputError('Candidate does not satisfy all verifiable macro constraints; save was blocked.')
     if preview['constraints']['checks'] and not preview['constraints']['all_verifiable']:
         raise AgentRecipeInputError('Candidate macro constraints cannot be verified with current nutrition coverage; save was blocked.')
+    if preview['constraints']['checks'] and not preview['constraints']['all_satisfied']:
+        raise AgentRecipeInputError('Candidate does not satisfy all macro constraints; save was blocked.')
 
     with transaction.atomic():
         recipe = save_recipe_from_agent(request, candidate, instance=None, partial=False)
