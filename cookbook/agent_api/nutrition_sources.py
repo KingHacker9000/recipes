@@ -9,6 +9,8 @@ FDC_BASE_URL = 'https://api.nal.usda.gov/fdc/v1'
 FDC_SEARCH_TTL = 12 * 60 * 60
 FDC_DETAIL_TTL = 7 * 24 * 60 * 60
 FDC_DATA_TYPES = ('Foundation', 'SR Legacy', 'Survey (FNDDS)', 'Branded')
+MASS_SERVING_UNITS = {'g', 'gram', 'grams', 'grm', 'oz', 'ounce', 'ounces', 'oza', 'ozi'}
+VOLUME_SERVING_UNITS = {'ml', 'milliliter', 'milliliters', 'millilitre', 'millilitres', 'mlt', 'fl oz', 'floz', 'fluid ounce', 'fluid ounces'}
 
 
 class FoodDataCentralError(RuntimeError):
@@ -79,6 +81,8 @@ def search_foods(query, *, page_size=10, data_types=None):
             'gtin_upc': item.get('gtinUpc') or '',
             'food_category': item.get('foodCategory') or '',
             'published_date': item.get('publishedDate') or '',
+            'serving_size': item.get('servingSize'),
+            'serving_size_unit': item.get('servingSizeUnit') or '',
         })
     result = {'query': query, 'foods': foods}
     cache.set(cache_key, result, timeout=FDC_SEARCH_TTL)
@@ -135,8 +139,23 @@ def _first(index, candidates):
     return None
 
 
+def _basis_unit(payload):
+    data_type = str(payload.get('dataType') or '').strip().lower()
+    if data_type != 'branded':
+        return 'g'
+
+    unit = str(payload.get('servingSizeUnit') or '').strip().lower()
+    if unit in MASS_SERVING_UNITS:
+        return 'g'
+    if unit in VOLUME_SERVING_UNITS:
+        return 'ml'
+    raise FoodDataCentralError(
+        'Branded FoodData Central record has an ambiguous serving-size basis; save a verified package label or choose a record with a clear mass/volume basis.'
+    )
+
+
 def nutrition_profile_from_fdc(payload):
-    """Normalize verified FDC nutrients into the Agent API's per-100g contract."""
+    """Normalize a verified FDC record into its documented 100 g/100 ml basis."""
     index = _nutrient_index(payload)
     values = {
         'calories': _first(index, [
@@ -159,6 +178,6 @@ def nutrition_profile_from_fdc(payload):
         'brand_name': payload.get('brandName') or '',
         'gtin_upc': payload.get('gtinUpc') or '',
         'basis_amount': Decimal('100'),
-        'basis_unit': 'g',
+        'basis_unit': _basis_unit(payload),
         **values,
     }
