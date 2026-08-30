@@ -12,6 +12,7 @@ from cookbook.models import Food, Recipe, Space
 class AgentAuditEvent(models.Model):
     """Append-only audit record for writes performed through the Agent API."""
 
+    id = models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')
     event_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     client_id = models.CharField(max_length=128, default='tandoor-agent-api')
     action = models.CharField(max_length=128)
@@ -49,6 +50,8 @@ class AgentAuditEvent(models.Model):
 
 
 class AgentProposal(models.Model):
+    id = models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')
+
     STATUS_PENDING = 'pending'
     STATUS_APPLIED = 'applied'
     STATUS_REJECTED = 'rejected'
@@ -92,6 +95,8 @@ class FoodNutritionProfile(models.Model):
     volume units are converted deterministically by the nutrition service.
     Unknown/count units are only used when the ingredient unit matches exactly.
     """
+
+    id = models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')
 
     SOURCE_USER_LABEL = 'user_label'
     SOURCE_BRANDED = 'branded'
@@ -162,6 +167,7 @@ class FoodNutritionProfile(models.Model):
 class RecipeVariantLink(models.Model):
     """Lineage metadata for ordinary Tandoor recipes created as variants."""
 
+    id = models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')
     recipe = models.OneToOneField(Recipe, on_delete=models.CASCADE, related_name='agent_variant_metadata')
     parent_recipe = models.ForeignKey(Recipe, on_delete=models.CASCADE, related_name='agent_variants')
     variant_type = models.CharField(max_length=128, blank=True, default='custom')
