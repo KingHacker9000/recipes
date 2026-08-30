@@ -1,0 +1,91 @@
+name: Agent API CI
+
+on:
+  push:
+    branches:
+      - develop
+      - feature/tandoor-agent-api
+    paths:
+      - cookbook/agent_api/**
+      - cookbook/views/agent_api.py
+      - cookbook/apps.py
+      - cookbook/urls.py
+      - cookbook/migrations/0244_agent_api_nutrition_foundation.py
+      - cookbook/tests/other/test_agent_nutrition.py
+      - docs/agent-api.md
+      - .github/workflows/agent-api-ci.yml
+      - requirements.txt
+      - Dockerfile
+  pull_request:
+    branches: [develop]
+    paths:
+      - cookbook/agent_api/**
+      - cookbook/views/agent_api.py
+      - cookbook/apps.py
+      - cookbook/urls.py
+      - cookbook/migrations/0244_agent_api_nutrition_foundation.py
+      - cookbook/tests/other/test_agent_nutrition.py
+      - docs/agent-api.md
+      - .github/workflows/agent-api-ci.yml
+      - requirements.txt
+      - Dockerfile
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    env:
+      DISABLE_EXTERNAL_CONNECTORS: '1'
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install native Python build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libsasl2-dev python3-dev libxml2-dev libxmlsec1-dev libxslt1-dev \
+            libxmlsec1-openssl libldap2-dev libssl-dev gcc libpq-dev zlib1g-dev \
+            libjpeg-dev libwebp-dev libffi-dev cargo g++ curl poppler-utils
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile Agent API surfaces
+        run: |
+          python -m compileall -q \
+            cookbook/agent_api \
+            cookbook/views/agent_api.py \
+            cookbook/apps.py \
+            cookbook/urls.py \
+            cookbook/migrations/0244_agent_api_nutrition_foundation.py
+
+      - name: Run Django system checks
+        run: python manage.py check
+
+      - name: Verify migration state
+        run: python manage.py makemigrations cookbook --check --dry-run
+
+      - name: Run Agent API nutrition tests
+        run: pytest -o addopts='' cookbook/tests/other/test_agent_nutrition.py -q
+
+  alpine-multiplatform-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build production Alpine image for x86-64 and Pi ARM64
+        run: |
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --progress=plain \
+            .
