@@ -1,256 +1,192 @@
-# Tandoor Agent API
+# Tandoor Agent API and MCP
 
-The Agent API is a stable, client-neutral semantic boundary for ChatGPT/MCP and
-future agent clients. It deliberately does **not** expose a generic proxy to the
-legacy Tandoor REST API or direct database access.
+The Agent API is the client-neutral semantic boundary for ChatGPT/MCP and other
+agent clients. Tandoor remains the source of truth. The MCP service never receives
+database access and there is intentionally no generic HTTP, REST-proxy, SQL, shell,
+or arbitrary-model tool.
 
-## Design rules
+## Security and correctness rules
 
-1. Tandoor remains the source of truth for recipes, inventory, shopping and meal planning.
-2. The agent performs language/vision/culinary reasoning; deterministic server code performs unit conversion, macro arithmetic, authorization and persistence.
-3. Every object stays scoped to the authenticated user's active Tandoor space.
-4. Private recipe access reuses Tandoor's existing object-level recipe permission rules.
-5. Writes use idempotency keys, optimistic revision checks where applicable, transactions and append-only audit events.
-6. High-impact or ambiguous bulk changes are previewed as `AgentProposal` objects before apply.
-7. Unknown nutrition remains unknown. The API reports coverage/confidence instead of inventing precision.
-8. MCP is an adapter. The MCP service must call this API and must never connect to the database directly.
-
-## Nutrition provenance
-
-`FoodNutritionProfile` stores nutrition per a declared amount/unit and records its
-source and confidence. Source preference is intentionally explicit rather than
-hidden inside an AI prompt:
-
-1. `user_label` - user-verified package/nutrition-label data
-2. `branded` - exact branded product record
-3. `reference` - reference food database
-4. `estimated` - comparable-food estimate
-5. `ai_estimate` - model estimate
-6. `manual` - manual entry
-
-A profile can be marked `verified` and/or `is_default`. Only one default profile
-may exist for the same food in a space.
-
-For a nutrition-label photo, the vision-capable client should transcribe the label,
-resolve the existing Tandoor food, then create a `user_label` profile. The image
-itself does not need to be sent to Tandoor for macro calculation.
-
-## Deterministic unit conversion
-
-The first implementation supports common mass and volume units plus exact custom
-unit matching. It never guesses incompatible dimensions.
-
-Mass is normalized to grams. Volume is normalized to millilitres. A profile can
-supply `grams_per_ml` to permit deterministic volume/mass conversion for that
-specific food. Custom/count units only match the same normalized unit (for example
-`each` to `each`).
-
-If an ingredient says `2 scoops` but the available profile is per 100 g and no
-scoop weight is known, the ingredient is reported as unmatched rather than being
-estimated silently.
-
-The same conversion rules are reused when comparing recipes with pantry inventory.
-
-## Macro result contract
-
-Recipe and draft analysis returns:
-
-- total calories/protein/carbohydrate/fat plus optional fiber/sugar/sodium
-- per-serving values for stored recipes
-- per-ingredient profile/provenance and nutrient contribution
-- ingredient coverage
-- per-field coverage
-- average profile confidence
-- `complete_core_macros`
-- warnings for unmatched ingredients/units
-
-This allows a client to say "approximately 520 kcal, 94% nutrition coverage" rather
-than presenting false exactness.
-
-## Current v1 endpoints
-
-All endpoints are under `/api/agent/` and require an authenticated Tandoor user
-with read/write token scope.
-
-### Recipes
-
-- `GET recipes/?q=...`
-- `POST recipes/`
-- `GET recipes/{id}/`
-- `PATCH recipes/{id}/`
-- `POST recipes/{id}/clone/`
-- `GET recipes/{id}/nutrition/`
-- `POST recipes/{id}/scale-preview/`
-- `POST recipes/{id}/variant-preview/`
-- `POST recipes/{id}/save-variant/`
-- `POST recipes/{id}/pantry-check/`
-
-Recipe updates require `expected_updated_at`. Saving a variant requires
-`expected_parent_updated_at`. Stale writes return a conflict with the current
-recipe instead of overwriting a newer edit.
-
-### Foods and nutrition
-
-- `GET foods/?q=...`
-- `GET nutrition-profiles/?food_id=...`
-- `POST nutrition-profiles/`
-- `GET nutrition-profiles/{id}/`
-- `PATCH nutrition-profiles/{id}/`
-- `POST nutrition/evaluate-draft/`
-
-Nutrition-profile updates require `expected_updated_at`.
-
-### Pantry
-
-- `GET pantry/locations/`
-- `GET pantry/entries/`
-- `POST pantry/reconcile-preview/`
-- `GET proposals/{proposal_id}/`
-- `POST proposals/{proposal_id}/apply/`
-
-`recipes/{id}/pantry-check/` accepts an optional `target_servings`, so availability
-can be checked for a different portion count without modifying the recipe.
-
-### Audit / capabilities
-
-- `GET health/`
-- `GET audit/`
+1. Every request uses the authenticated user's active Tandoor space.
+2. Recipe reads/writes reuse Tandoor's existing recipe authorization rules.
+3. Mutations use `Idempotency-Key`, transactions and append-only `AgentAuditEvent` records.
+4. Existing mutable records use optimistic revisions (`updated_at`) where practical.
+5. High-impact/ambiguous inventory reconciliation is previewed as an expiring `AgentProposal` and requires explicit apply confirmation.
+6. Nutrition arithmetic and unit conversion are deterministic server code. AI may identify/propose food; AI never performs the final macro arithmetic.
+7. Missing nutrition remains missing. Coverage/confidence is returned instead of fabricated precision.
+8. Recipe variants are ordinary Tandoor recipes plus `RecipeVariantLink` lineage; the original recipe is never silently overwritten by personalization.
 
 ## Headers for writes
 
-Agent adapters should send:
+Agent clients should send:
 
 - `X-Agent-Client`: stable client identifier
 - `X-Request-ID`: tracing identifier
-- `Idempotency-Key`: unique mutation identifier
+- `Idempotency-Key`: stable key for one intended mutation/retry sequence
 
-The first successful mutation for an idempotency key is recorded in
-`AgentAuditEvent`; retries replay the stored response instead of duplicating the
-write.
+A successful mutation and its audit event commit in the same transaction. Retrying
+the same idempotency key returns the stored response.
 
-## Recipe input boundary
+## Nutrition provenance
 
-The Agent API intentionally accepts a smaller schema than Tandoor's generic nested
-REST serializer. It allows recipe fields, keywords, steps and ingredients, with
-food/unit references by ID or exact name.
+`FoodNutritionProfile` stores nutrition for a specific food/product and records
+basis amount/unit, source, confidence, verification, optional density and optional
+barcode/brand metadata.
 
-Before invoking Tandoor's native `RecipeSerializer`, the Agent API verifies that:
+Source priority is explicit:
 
-- referenced foods and units belong to the active space
-- nested step/ingredient IDs really belong to the recipe being updated
-- new recipes cannot smuggle in existing nested-object IDs
-- recipe/step/ingredient list sizes stay bounded
-- servings and ingredient amounts are numeric and sane
+1. `user_label` - user-verified package/nutrition-label values
+2. `branded` - verified exact branded record
+3. `reference` - verified reference database food
+4. `estimated` - comparable-food estimate
+5. `ai_estimate` - explicit model estimate
+6. `manual` - manual entry
 
-This keeps Tandoor's mature nested serializer behavior while removing a generic
-nested-object escape hatch from agent clients.
+The nutrition engine supports deterministic common mass/volume conversion and exact
+count/custom-unit matching. Mass/volume cross-conversion requires a food-specific
+`grams_per_ml` density. Unknown scoop/piece weights are not guessed.
 
-## Exact scaling
+## USDA FoodData Central
 
-`scale-preview` scales numeric ingredient quantities by the requested serving
-ratio and recalculates total nutrition. It deliberately labels itself `exact`.
-Practical culinary changes (rounding eggs, changing pan size, adjusting seasoning,
-etc.) belong to the agent's reasoning pass and must be re-evaluated by the nutrition
-engine before being saved.
+The optional server-side resolver uses the official Food Search and Food Details
+API endpoints. Configure:
 
-Pantry checks use the same serving ratio when `target_servings` is provided.
+```text
+USDA_FDC_API_KEY=<data.gov API key>
+```
 
-## Recipe variants
+`nutrition/fdc/search/` returns candidates only. Nothing is persisted until a
+specific candidate is submitted to `foods/{id}/nutrition/fdc/verify/` with
+`confirmed=true`. Verified records are cached, saved as a nutrition profile and the
+FDC ID is stored on the Tandoor food. A confirmed FDC ID that later returns 404 is
+invalidated/cleared rather than silently reused.
 
-`RecipeVariantLink` stores lineage for ordinary Tandoor recipes so variants remain
-normal recipes everywhere else in Tandoor.
+Package-label photos should normally be interpreted by the external agent and saved
+through `nutrition-profiles/` as a verified `user_label` profile. This keeps image
+reasoning outside deterministic nutrition persistence.
 
-Supported deterministic macro constraints currently include:
+## Recipe endpoints
 
-- `calories_max` / `calories_min`
-- `protein_min_g` / `protein_max_g`
-- `carbohydrate_min_g` / `carbohydrate_max_g`
-- `fat_min_g` / `fat_max_g`
-- `fiber_min_g` / `fiber_max_g`
+All paths below are relative to `/api/agent/`.
 
-Other constraints such as `inventory_policy`, dietary rules and ingredients to
-preserve are returned unchanged for the agent's culinary reasoning.
+- `GET|POST recipes/` - search/list or create recipes
+- `GET|PATCH recipes/{id}/` - read/update with optimistic concurrency
+- `POST recipes/{id}/clone/`
+- `GET recipes/{id}/nutrition/`
+- `POST recipes/{id}/scale-preview/` - mathematical scale
+- `POST recipes/{id}/practical-scale-preview/` - explicit count rounding + custom-unit warnings
+- `POST recipes/{id}/variant-preview/`
+- `POST recipes/{id}/save-variant/`
+- `POST recipes/{id}/pantry-check/`
+- `POST recipes/{id}/substitution-context/` - configured Tandoor substitutes only
+- `POST recipes/recommend/` - deterministic pantry + verifiable macro ranking
 
-A low-calorie/high-protein flow is therefore:
+Macro-constrained variant saves are blocked if a requested target fails **or** if
+nutrition coverage is insufficient to verify that target.
 
-1. read the original recipe
-2. read/analyze nutrition and pantry availability
-3. propose a candidate recipe
-4. call `variant-preview`
-5. use deterministic macro results to revise the candidate if needed
-6. call `save-variant` only after the targets are fully verifiable and satisfied
+## Pantry endpoints
 
-The server blocks variant saves when requested macro targets fail or cannot be
-verified because nutrition coverage is incomplete.
+- `GET pantry/locations/`
+- `GET pantry/entries/`
+- `POST pantry/adjust/` - explicit signed delta such as "used 2 eggs"
+- `POST pantry/reconcile-preview/` - vision/agent observations to reviewable proposal
+- `GET proposals/{uuid}/`
+- `POST proposals/{uuid}/apply/`
 
-## Pantry and fridge-photo semantics
+Reconciliation modes:
 
-A vision-capable client converts a fridge image into structured observations such
-as food, amount, unit, location and confidence. Tandoor turns those observations
-into an `AgentProposal`; the model does not directly mutate inventory.
+- `augment` (default): may add/increase observed stock but never removes unseen stock.
+- `snapshot`: one explicit inventory location is treated as a complete snapshot and may propose decreases/removals. Apply still requires confirmation and an unchanged inventory revision.
 
-Two reconciliation modes exist:
+Recipe pantry checks accept `target_servings`, consume compatible inventory entries
+in expiry order, and return complete/partial/missing/unknown quantities.
 
-### `augment` (default)
+## Household endpoints
 
-- adds a newly observed food
-- can increase a matching existing quantity
-- never decreases/removes inventory from visual absence
-- safest default for ordinary fridge photos where items may be hidden
+- `GET|POST shopping/lists/`
+- `GET|POST shopping/entries/`
+- `PATCH|DELETE shopping/entries/{id}/`
+- `GET meal-types/`
+- `GET|POST meal-plans/`
+- `DELETE meal-plans/{id}/`
 
-### `snapshot`
+Deletes require explicit `confirmed=true`. Shopping entry updates require the
+`expected_updated_at` revision returned by the read endpoint.
 
-- limited to one inventory location per proposal
-- treats the observations as an explicit complete snapshot
-- may decrease quantities or set unobserved entries to zero
-- marked high impact
+## Nutrition endpoints
 
-Both modes require a separate apply call with `confirmed=true`. Proposals expire
-after one hour. Apply checks an inventory revision under a transaction; if the
-relevant inventory changed after preview, the write is rejected and a fresh
-preview is required.
+- `GET foods/?q=...`
+- `GET|POST nutrition-profiles/`
+- `GET|PATCH nutrition-profiles/{id}/`
+- `POST nutrition/evaluate-draft/`
+- `GET nutrition/fdc/search/?q=...`
+- `POST foods/{id}/nutrition/fdc/verify/`
 
-Each applied quantity change also creates Tandoor `InventoryLog` history.
+Recipe/draft analysis returns total and per-serving nutrients, ingredient-level
+provenance, per-field coverage, average confidence, `complete_core_macros`, and
+warnings for unmatched units/foods.
 
-Unknown foods are returned as unresolved instead of silently created. Unknown unit
-names are rejected. This makes image-recognition uncertainty visible to the agent
-and user.
+## MCP service
 
-## Current development phases
+`tandoor_mcp` is a separate thin service. Its tool registry maps only to the
+semantic endpoints above. It contains no Tandoor models, serializers or database
+credentials.
 
-### Implemented foundation
+Required outbound configuration:
 
-- semantic API boundary
-- space and recipe authorization
-- audit/idempotency
-- proposals
-- food-level nutrition/provenance
-- deterministic macro engine
-- exact portion scaling
-- recipe create/update/clone
-- macro-target variant preview/save + lineage
-- pantry read/search
-- recipe-vs-pantry availability
-- fridge reconciliation preview/apply
+```text
+TANDOOR_BASE_URL=https://cook.example.com
+TANDOOR_API_TOKEN=<Tandoor OAuth access token with read/write scope>
+```
 
-### Next: richer pantry-aware recipe intelligence
+Local stdio:
 
-- explicit pantry adjustment proposals (`delta`, `set`, `remove`) for commands such as "I used 2 eggs"
-- pantry-aware substitution candidate contract
-- recipe ranking by pantry coverage + macro targets
-- practical portion scaling (rounding/count ingredients while recalculating macros)
-- nutrition source import helpers and label-review workflow
+```bash
+python -m tandoor_mcp --transport stdio
+```
 
-### Later: household actions
+Remote Streamable HTTP:
 
-- shopping list updates from missing ingredients
-- meal-plan updates
-- macro-target meal suggestions
+```text
+MCP_BEARER_TOKEN=<long random inbound MCP bearer token>
+```
 
-### Final adapter: MCP / ChatGPT
+```bash
+python -m tandoor_mcp --transport streamable-http --host 0.0.0.0 --port 8765
+```
 
-Run a separate, thin `tandoor-mcp` service. It translates MCP tool calls into the
-semantic Agent API and contains no Tandoor database/business logic. The intended
-MCP tools map closely to semantic operations such as `recipes.get`,
-`recipes.variant_preview`, `pantry.reconcile_preview` and
-`nutrition.evaluate_draft` rather than generic HTTP/SQL primitives.
+Remote HTTP refuses to start without `MCP_BEARER_TOKEN` unless
+`--allow-unauthenticated-http` is deliberately supplied. The production image is
+`Dockerfile.mcp`; it runs as an unprivileged user and contains only the MCP adapter
+and its minimal dependencies.
+
+## MCP tool families
+
+The MCP registry exposes semantic tools for:
+
+- recipe search/read/nutrition/practical scaling/recommendation
+- pantry availability, explicit inventory deltas and photo reconciliation
+- configured substitution context
+- variant preview/save
+- Tandoor food and nutrition-label persistence
+- USDA candidate search/verification
+- shopping lists and entries
+- meal types and meal plans
+
+There is no generic fetch, arbitrary URL, SQL, database, shell, Docker or filesystem
+tool.
+
+## Social Recipe Inbox relationship
+
+The existing Social Recipe Inbox remains the acquisition layer for shared/pasted
+social URLs. The Agent API/MCP layer consumes normal saved Tandoor recipes and does
+not bypass the Social Inbox review-before-save workflow.
+
+## Deployment boundary
+
+This branch intentionally contains application code and deployable images but does
+not change a live deployment. Run the Tandoor web application and Social Import
+worker as before, and run `Dockerfile.mcp` as a separate service when MCP access is
+enabled. The MCP container needs only its outbound Tandoor API token and inbound MCP
+auth secret; it must not receive the Tandoor database, Docker socket, or private AI
+runtime volume.
