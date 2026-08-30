@@ -1,0 +1,153 @@
+name: Agent API CI
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - cookbook/agent_api/**
+      - cookbook/views/agent_api.py
+      - cookbook/views/agent_pantry.py
+      - cookbook/views/agent_extended.py
+      - cookbook/views/agent_actions.py
+      - cookbook/views/agent_meal_plans.py
+      - tandoor_mcp/**
+      - cookbook/apps.py
+      - cookbook/urls.py
+      - cookbook/social_import/models.py
+      - cookbook/migrations/0244_agent_api_nutrition_foundation.py
+      - cookbook/tests/other/test_agent_nutrition.py
+      - cookbook/tests/other/test_agent_recipes.py
+      - cookbook/tests/other/test_agent_pantry.py
+      - cookbook/tests/other/test_agent_extended.py
+      - cookbook/tests/other/test_agent_meal_plans.py
+      - docs/agent-api.md
+      - .github/workflows/agent-api-ci.yml
+      - requirements-mcp.txt
+      - Dockerfile
+      - Dockerfile.mcp
+  pull_request:
+    branches: [develop]
+    paths:
+      - cookbook/agent_api/**
+      - cookbook/views/agent_api.py
+      - cookbook/views/agent_pantry.py
+      - cookbook/views/agent_extended.py
+      - cookbook/views/agent_actions.py
+      - cookbook/views/agent_meal_plans.py
+      - tandoor_mcp/**
+      - cookbook/apps.py
+      - cookbook/urls.py
+      - cookbook/social_import/models.py
+      - cookbook/migrations/0244_agent_api_nutrition_foundation.py
+      - cookbook/tests/other/test_agent_nutrition.py
+      - cookbook/tests/other/test_agent_recipes.py
+      - cookbook/tests/other/test_agent_pantry.py
+      - cookbook/tests/other/test_agent_extended.py
+      - cookbook/tests/other/test_agent_meal_plans.py
+      - docs/agent-api.md
+      - .github/workflows/agent-api-ci.yml
+      - requirements-mcp.txt
+      - Dockerfile
+      - Dockerfile.mcp
+
+concurrency:
+  group: agent-api-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    env:
+      DISABLE_EXTERNAL_CONNECTORS: '1'
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install native Python build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libsasl2-dev python3-dev libxml2-dev libxmlsec1-dev libxslt1-dev \
+            libxmlsec1-openssl libldap2-dev libssl-dev gcc libpq-dev zlib1g-dev \
+            libjpeg-dev libwebp-dev libffi-dev cargo g++ curl poppler-utils
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-mcp.txt
+
+      - name: Compile Agent API and MCP surfaces
+        run: |
+          python -m compileall -q \
+            cookbook/agent_api \
+            cookbook/views/agent_api.py \
+            cookbook/views/agent_pantry.py \
+            cookbook/views/agent_extended.py \
+            cookbook/views/agent_actions.py \
+            cookbook/views/agent_meal_plans.py \
+            tandoor_mcp \
+            cookbook/apps.py \
+            cookbook/urls.py \
+            cookbook/social_import/models.py \
+            cookbook/migrations/0244_agent_api_nutrition_foundation.py
+
+      - name: Run Django system checks
+        run: python manage.py check
+
+      - name: Verify migration state
+        run: python manage.py makemigrations cookbook --check --dry-run
+
+      - name: Verify MCP registry imports
+        run: |
+          python - <<'PY'
+          from tandoor_mcp.complete import TOOLS, build_server
+          assert len(TOOLS) >= 31
+          assert 'recipe_create' in TOOLS
+          assert 'recipe_update' in TOOLS
+          assert 'recipe_save_variant' in TOOLS
+          assert 'pantry_reconcile_preview' in TOOLS
+          assert 'pantry_locations' in TOOLS
+          assert 'proposal_get' in TOOLS
+          assert 'meal_plan_update' in TOOLS
+          assert build_server() is not None
+          print(f'MCP tools: {len(TOOLS)}')
+          PY
+
+      - name: Run Agent API tests
+        run: |
+          pytest -o addopts='' \
+            cookbook/tests/other/test_agent_nutrition.py \
+            cookbook/tests/other/test_agent_recipes.py \
+            cookbook/tests/other/test_agent_pantry.py \
+            cookbook/tests/other/test_agent_extended.py \
+            cookbook/tests/other/test_agent_meal_plans.py \
+            -q
+
+  alpine-multiplatform-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build production Alpine image for x86-64 and Pi ARM64
+        run: |
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --progress=plain \
+            .
+      - name: Build isolated MCP image for x86-64 and Pi ARM64
+        run: |
+          docker buildx build \
+            --file Dockerfile.mcp \
+            --platform linux/amd64,linux/arm64 \
+            --progress=plain \
+            .

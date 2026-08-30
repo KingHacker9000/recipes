@@ -4,6 +4,11 @@ from django_scopes import ScopedManager
 
 
 class SocialImportJob(models.Model):
+    # 0243 shipped with a BigAutoField while this legacy app still defaults
+    # implicit primary keys differently. Keep the model state explicit so
+    # makemigrations does not try to shrink/alter the live primary key later.
+    id = models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')
+
     PLATFORM_TIKTOK = 'tiktok'
     PLATFORM_INSTAGRAM = 'instagram'
     PLATFORM_YOUTUBE = 'youtube'
@@ -59,8 +64,8 @@ class SocialImportJob(models.Model):
     class Meta:
         ordering = ('-created_at',)
         indexes = (
-            models.Index(fields=['space', 'status', 'created_at']),
-            models.Index(fields=['created_by', 'status', 'created_at']),
+            models.Index(fields=['space', 'status', 'created_at'], name='cookbook_so_space_i_8564c8_idx'),
+            models.Index(fields=['created_by', 'status', 'created_at'], name='cookbook_so_created_9541ff_idx'),
         )
 
     def __str__(self):
