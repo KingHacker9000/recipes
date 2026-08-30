@@ -61,9 +61,9 @@ def test_native_recipe_properties_mirror_agent_per_serving_nutrition_and_preserv
             prop.property_type.name: prop.property_amount
             for prop in Property.objects.filter(space=space_1, open_data_food_slug=marker).select_related('property_type')
         }
-        assert managed['Calories'] == Decimal('465.5000')
-        assert managed['Protein'] == Decimal('12.2500')
-        assert managed['Sodium'] == Decimal('310.0000')
+        assert managed['Calories'] == Decimal('465.500')
+        assert managed['Protein'] == Decimal('12.250')
+        assert managed['Sodium'] == Decimal('310.000')
         assert recipe_1_s1.properties.filter(pk=manual.pk).exists()
 
 
