@@ -10,6 +10,7 @@ on:
       - cookbook/views/agent_api.py
       - cookbook/views/agent_pantry.py
       - cookbook/views/agent_extended.py
+      - cookbook/views/agent_actions.py
       - tandoor_mcp/**
       - cookbook/apps.py
       - cookbook/urls.py
@@ -30,6 +31,7 @@ on:
       - cookbook/views/agent_api.py
       - cookbook/views/agent_pantry.py
       - cookbook/views/agent_extended.py
+      - cookbook/views/agent_actions.py
       - tandoor_mcp/**
       - cookbook/apps.py
       - cookbook/urls.py
@@ -80,6 +82,7 @@ jobs:
             cookbook/views/agent_api.py \
             cookbook/views/agent_pantry.py \
             cookbook/views/agent_extended.py \
+            cookbook/views/agent_actions.py \
             tandoor_mcp \
             cookbook/apps.py \
             cookbook/urls.py \
