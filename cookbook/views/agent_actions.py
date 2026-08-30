@@ -6,6 +6,7 @@ from rest_framework.views import APIView
 from cookbook.agent_api.audit import find_idempotent_replay, record_agent_event
 from cookbook.agent_api.household import (
     AgentHouseholdInputError,
+    accessible_meal_plan_queryset,
     create_meal_plan,
     create_shopping_entry,
     create_shopping_list,
@@ -197,8 +198,7 @@ class AgentMealPlanCollectionView(APIView):
     permission_classes = AGENT_PERMISSION
 
     def get(self, request):
-        values = (MealPlan.objects
-                  .filter(space=request.space)
+        values = (accessible_meal_plan_queryset(request)
                   .select_related('recipe', 'meal_type')
                   .order_by('from_date', 'id'))
         if request.query_params.get('from'):
@@ -214,7 +214,7 @@ class AgentMealPlanCollectionView(APIView):
         try:
             with transaction.atomic():
                 obj = create_meal_plan(request, request.data)
-                obj = MealPlan.objects.select_related('recipe', 'meal_type').get(pk=obj.pk)
+                obj = accessible_meal_plan_queryset(request).select_related('recipe', 'meal_type').get(pk=obj.pk)
                 response = meal_plan_payload(obj)
                 record_agent_event(request, action='meal_plan.create', target_type='MealPlan', target_id=obj.id, after=response, response=response)
         except AgentHouseholdInputError as exc:
@@ -235,7 +235,7 @@ class AgentMealPlanDetailView(APIView):
             return _error(AgentHouseholdInputError('confirmed=true is required to delete a meal plan.'))
         try:
             with transaction.atomic():
-                obj = MealPlan.objects.filter(pk=pk, space=request.space).select_related('recipe', 'meal_type').first()
+                obj = accessible_meal_plan_queryset(request).filter(pk=pk).select_related('recipe', 'meal_type').first()
                 if obj is None:
                     return Response(status=status.HTTP_404_NOT_FOUND)
                 before = meal_plan_payload(obj)
