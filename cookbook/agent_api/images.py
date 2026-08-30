@@ -44,24 +44,25 @@ def normalize_recipe_image(image_base64, *, content_type=''):
     """Validate and re-encode a recipe image before it enters media storage.
 
     Re-encoding strips metadata and prevents arbitrary bytes from being stored
-    under an image extension. Only JPEG, PNG and WEBP are accepted.
+    under an image extension. Only JPEG, PNG and WEBP are accepted. Dimensions
+    are checked before the full raster is decoded to keep memory use bounded.
     """
     raw = _decode_base64(image_base64)
     try:
         with warnings.catch_warnings():
             warnings.simplefilter('error', Image.DecompressionBombWarning)
             image = Image.open(io.BytesIO(raw))
+            image_format = str(image.format or '').upper()
+            if image_format not in ALLOWED_FORMATS:
+                raise AgentRecipeImageError('Only JPEG, PNG and WEBP recipe images are supported.')
+            width, height = image.size
+            if width <= 0 or height <= 0 or width * height > MAX_IMAGE_PIXELS:
+                raise AgentRecipeImageError('Recipe image exceeds the 20 megapixel limit.')
             image.load()
-    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombWarning):
+    except AgentRecipeImageError:
+        raise
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombWarning, Image.DecompressionBombError):
         raise AgentRecipeImageError('Decoded payload is not a valid supported image.')
-
-    image_format = str(image.format or '').upper()
-    if image_format not in ALLOWED_FORMATS:
-        raise AgentRecipeImageError('Only JPEG, PNG and WEBP recipe images are supported.')
-
-    width, height = image.size
-    if width <= 0 or height <= 0 or width * height > MAX_IMAGE_PIXELS:
-        raise AgentRecipeImageError('Recipe image exceeds the 20 megapixel limit.')
 
     extension, canonical_content_type = ALLOWED_FORMATS[image_format]
     supplied_content_type = str(content_type or '').strip().lower()
