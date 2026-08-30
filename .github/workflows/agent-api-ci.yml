@@ -11,6 +11,9 @@ on:
       - cookbook/views/agent_extended.py
       - cookbook/views/agent_actions.py
       - cookbook/views/agent_meal_plans.py
+      - cookbook/views/agent_health.py
+      - cookbook/views/agent_media.py
+      - cookbook/management/commands/sync_agent_nutrition_properties.py
       - tandoor_mcp/**
       - cookbook/apps.py
       - cookbook/urls.py
@@ -18,6 +21,7 @@ on:
       - cookbook/migrations/0244_agent_api_nutrition_foundation.py
       - cookbook/tests/other/test_agent_nutrition.py
       - cookbook/tests/other/test_agent_recipes.py
+      - cookbook/tests/other/test_agent_native_integration.py
       - cookbook/tests/other/test_agent_pantry.py
       - cookbook/tests/other/test_agent_extended.py
       - cookbook/tests/other/test_agent_meal_plans.py
@@ -35,6 +39,9 @@ on:
       - cookbook/views/agent_extended.py
       - cookbook/views/agent_actions.py
       - cookbook/views/agent_meal_plans.py
+      - cookbook/views/agent_health.py
+      - cookbook/views/agent_media.py
+      - cookbook/management/commands/sync_agent_nutrition_properties.py
       - tandoor_mcp/**
       - cookbook/apps.py
       - cookbook/urls.py
@@ -42,6 +49,7 @@ on:
       - cookbook/migrations/0244_agent_api_nutrition_foundation.py
       - cookbook/tests/other/test_agent_nutrition.py
       - cookbook/tests/other/test_agent_recipes.py
+      - cookbook/tests/other/test_agent_native_integration.py
       - cookbook/tests/other/test_agent_pantry.py
       - cookbook/tests/other/test_agent_extended.py
       - cookbook/tests/other/test_agent_meal_plans.py
@@ -94,6 +102,9 @@ jobs:
             cookbook/views/agent_extended.py \
             cookbook/views/agent_actions.py \
             cookbook/views/agent_meal_plans.py \
+            cookbook/views/agent_health.py \
+            cookbook/views/agent_media.py \
+            cookbook/management/commands/sync_agent_nutrition_properties.py \
             tandoor_mcp \
             cookbook/apps.py \
             cookbook/urls.py \
@@ -110,10 +121,12 @@ jobs:
         run: |
           python - <<'PY'
           from tandoor_mcp.complete import TOOLS, build_server
-          assert len(TOOLS) >= 31
+          assert len(TOOLS) >= 33
           assert 'recipe_create' in TOOLS
           assert 'recipe_update' in TOOLS
           assert 'recipe_save_variant' in TOOLS
+          assert 'recipe_image_get' in TOOLS
+          assert 'recipe_image_upload' in TOOLS
           assert 'pantry_reconcile_preview' in TOOLS
           assert 'pantry_locations' in TOOLS
           assert 'proposal_get' in TOOLS
@@ -127,6 +140,7 @@ jobs:
           pytest -o addopts='' \
             cookbook/tests/other/test_agent_nutrition.py \
             cookbook/tests/other/test_agent_recipes.py \
+            cookbook/tests/other/test_agent_native_integration.py \
             cookbook/tests/other/test_agent_pantry.py \
             cookbook/tests/other/test_agent_extended.py \
             cookbook/tests/other/test_agent_meal_plans.py \
