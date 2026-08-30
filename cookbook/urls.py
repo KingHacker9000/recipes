@@ -7,7 +7,7 @@ from rest_framework import routers
 
 from cookbook.version_info import TANDOOR_VERSION
 from recipes.settings import DEBUG, PLUGINS
-from .views import api, telegram, views, import_export
+from .views import api, telegram, views, import_export, social_import
 from .views.api import CustomAuthToken
 
 
@@ -99,6 +99,9 @@ urlpatterns = [
     # for internal use only
     path('view-recipe-pdf/<int:pk>/', views.recipe_pdf_viewer, name='view_recipe_pdf'),
 
+    # Preserve the existing PWA share-target URL while routing supported social links into the inbox.
+    path('recipe/import', social_import.social_share_entry, name='social_share_entry'),
+
     # Tandoor v1 redirects
     path('view/recipe/<int:pk>', views.redirect_recipe_view, name='redirect_recipe_view'),
     path('view/recipe/<int:pk>/<slug:share>', views.redirect_recipe_share_view, name='redirect_recipe_share_view'),
@@ -118,6 +121,12 @@ urlpatterns = [
     path('api/reset-food-inheritance/', api.reset_food_inheritance, name='api_reset_food_inheritance'),
     path('api/switch-active-space/<int:space_id>/', api.switch_active_space, name='api_switch_active_space'),
     path('api/download-file/<int:file_id>/', api.download_file, name='api_download_file'),
+
+    path('api/social-import/', social_import.SocialImportCollectionView.as_view(), name='api_social_import'),
+    path('api/social-import/<int:pk>/', social_import.SocialImportDetailView.as_view(), name='api_social_import_detail'),
+    path('api/social-import/<int:pk>/retry/', social_import.SocialImportRetryView.as_view(), name='api_social_import_retry'),
+    path('api/social-import/<int:pk>/save/', social_import.SocialImportSaveView.as_view(), name='api_social_import_save'),
+
     path('telegram/setup/<int:pk>', telegram.setup_bot, name='telegram_setup'),
     path('telegram/remove/<int:pk>', telegram.remove_bot, name='telegram_remove'),
     path('telegram/hook/<slug:token>/', telegram.hook, name='telegram_hook'),
