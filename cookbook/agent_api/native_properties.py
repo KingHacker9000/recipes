@@ -59,7 +59,8 @@ def _marker(recipe):
 def _amount(value):
     if value is None:
         return None
-    return Decimal(str(value)).quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP)
+    # Property.property_amount is DecimalField(..., decimal_places=3).
+    return Decimal(str(value)).quantize(Decimal('0.001'), rounding=ROUND_HALF_UP)
 
 
 def _property_type(space, spec):
