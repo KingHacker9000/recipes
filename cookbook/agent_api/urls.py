@@ -1,6 +1,6 @@
 from django.urls import path
 
-from cookbook.views import agent_actions, agent_api, agent_extended, agent_pantry
+from cookbook.views import agent_actions, agent_api, agent_extended, agent_meal_plans, agent_pantry
 
 
 urlpatterns = [
@@ -31,7 +31,7 @@ urlpatterns = [
     path('shopping/entries/<int:pk>/', agent_actions.AgentShoppingEntryDetailView.as_view(), name='api_agent_shopping_entry_detail'),
     path('meal-types/', agent_actions.AgentMealTypeCollectionView.as_view(), name='api_agent_meal_types'),
     path('meal-plans/', agent_actions.AgentMealPlanCollectionView.as_view(), name='api_agent_meal_plans'),
-    path('meal-plans/<int:pk>/', agent_actions.AgentMealPlanDetailView.as_view(), name='api_agent_meal_plan_detail'),
+    path('meal-plans/<int:pk>/', agent_meal_plans.AgentMealPlanMutableDetailView.as_view(), name='api_agent_meal_plan_detail'),
     path('proposals/<uuid:proposal_id>/', agent_pantry.AgentProposalDetailView.as_view(), name='api_agent_proposal_detail'),
     path('proposals/<uuid:proposal_id>/apply/', agent_pantry.AgentProposalApplyView.as_view(), name='api_agent_proposal_apply'),
     path('audit/', agent_api.AgentAuditCollectionView.as_view(), name='api_agent_audit'),
