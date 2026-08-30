@@ -19,7 +19,7 @@ class AgentCompleteHealthView(APIView):
 
     def get(self, request):
         return Response({
-            'version': '2026-08-30.v2',
+            'version': '2026-08-30.v3',
             'space_id': request.space.id,
             'capabilities': {
                 'recipes': [
@@ -31,7 +31,7 @@ class AgentCompleteHealthView(APIView):
                 'nutrition': ['evaluate_draft', 'coverage', 'provenance'],
                 'pantry': ['locations', 'entries', 'adjust_delta', 'reconcile_preview', 'proposal_apply'],
                 'shopping': ['lists', 'entry_create', 'entry_update', 'entry_delete'],
-                'meal_plans': ['meal_types', 'list', 'create', 'delete'],
+                'meal_plans': ['meal_types', 'list', 'create', 'update', 'delete'],
                 'audit': ['list', 'idempotency'],
                 'mcp': ['semantic_tools', 'stdio', 'authenticated_streamable_http'],
             },
