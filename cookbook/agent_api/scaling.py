@@ -3,6 +3,7 @@ from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP
 
 from cookbook.agent_api.nutrition import evaluate_draft, unit_descriptor
 from cookbook.agent_api.recipes import AgentRecipeInputError, recipe_to_agent_input
+from cookbook.models import Unit
 
 
 def _decimal(value, field):
@@ -53,7 +54,7 @@ def practical_scale_preview(recipe, target_servings, space, *, count_step=1, cou
             unit_name = ''
             unit_id = ingredient.get('unit_id')
             if unit_id:
-                unit = recipe.space.unit_set.filter(pk=unit_id).first() if hasattr(recipe.space, 'unit_set') else None
+                unit = Unit.objects.filter(pk=unit_id, space=space).first()
                 if unit:
                     unit_name = unit.name
             descriptor = unit_descriptor(unit_name)
