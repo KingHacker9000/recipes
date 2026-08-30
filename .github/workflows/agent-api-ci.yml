@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - develop
-      - feature/tandoor-agent-api
     paths:
       - cookbook/agent_api/**
       - cookbook/views/agent_api.py
@@ -22,7 +21,6 @@ on:
       - cookbook/tests/other/test_agent_extended.py
       - docs/agent-api.md
       - .github/workflows/agent-api-ci.yml
-      - requirements.txt
       - requirements-mcp.txt
       - Dockerfile
       - Dockerfile.mcp
@@ -45,10 +43,13 @@ on:
       - cookbook/tests/other/test_agent_extended.py
       - docs/agent-api.md
       - .github/workflows/agent-api-ci.yml
-      - requirements.txt
       - requirements-mcp.txt
       - Dockerfile
       - Dockerfile.mcp
+
+concurrency:
+  group: agent-api-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -78,6 +79,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install -r requirements-mcp.txt
 
       - name: Compile Agent API and MCP surfaces
         run: |
@@ -103,9 +105,13 @@ jobs:
         run: |
           python - <<'PY'
           from tandoor_mcp.server import TOOLS, build_server
-          assert len(TOOLS) >= 20
+          assert len(TOOLS) >= 30
+          assert 'recipe_create' in TOOLS
+          assert 'recipe_update' in TOOLS
           assert 'recipe_save_variant' in TOOLS
           assert 'pantry_reconcile_preview' in TOOLS
+          assert 'pantry_locations' in TOOLS
+          assert 'proposal_get' in TOOLS
           assert build_server() is not None
           print(f'MCP tools: {len(TOOLS)}')
           PY
