@@ -22,6 +22,33 @@ _server.TOOLS['meal_plan_update'] = _server.ToolSpec(
     ('meal_plan_id',),
 )
 
+_server.TOOLS['recipe_image_get'] = _server.ToolSpec(
+    'Get recipe image',
+    'Read the current native Tandoor recipe image and optimistic recipe revision.',
+    'GET',
+    '/api/agent/recipes/{recipe_id}/image/',
+    _server.obj({
+        'recipe_id': _server.integer('Recipe ID.'),
+    }, ['recipe_id']),
+    path_args=('recipe_id',),
+)
+
+_server.TOOLS['recipe_image_upload'] = _server.ToolSpec(
+    'Upload recipe image',
+    'Set a native Tandoor recipe image from validated base64 JPEG, PNG or WEBP data. Maximum decoded size is 8 MiB.',
+    'POST',
+    '/api/agent/recipes/{recipe_id}/image/',
+    _server.obj({
+        'recipe_id': _server.integer('Recipe ID.'),
+        'expected_updated_at': _server.string('Current recipe revision returned by recipe_get or recipe_image_get.'),
+        'image_base64': _server.string('Base64 image bytes or a base64 data URI. JPEG, PNG and WEBP only.'),
+        'content_type': _server.string('Optional MIME type matching the decoded image, e.g. image/jpeg.'),
+        **_server.IDEMPOTENCY,
+    }, ['recipe_id', 'expected_updated_at', 'image_base64']),
+    True,
+    ('recipe_id',),
+)
+
 
 TOOLS = _server.TOOLS
 ToolSpec = _server.ToolSpec
