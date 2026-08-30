@@ -1,4 +1,4 @@
-name: Publish Fork Docker Image
+name: Publish Fork Docker Images
 
 on:
   push:
@@ -11,12 +11,12 @@ permissions:
   packages: write
 
 concurrency:
-  group: publish-fork-image-${{ github.ref }}
+  group: publish-fork-images-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   publish:
-    name: Publish amd64 + arm64 image
+    name: Publish Tandoor + MCP amd64/arm64 images
     if: github.repository == 'KingHacker9000/recipes'
     runs-on: ubuntu-latest
 
@@ -48,8 +48,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Docker metadata
-        id: meta
+      - name: Tandoor image metadata
+        id: tandoor_meta
         uses: docker/metadata-action@v6
         with:
           images: ghcr.io/kinghacker9000/recipes
@@ -60,7 +60,7 @@ jobs:
             org.opencontainers.image.source=https://github.com/KingHacker9000/recipes
             org.opencontainers.image.revision=${{ github.sha }}
 
-      - name: Build and push production image
+      - name: Build and push Tandoor image
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -68,7 +68,32 @@ jobs:
           pull: true
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: ${{ steps.tandoor_meta.outputs.tags }}
+          labels: ${{ steps.tandoor_meta.outputs.labels }}
+          cache-from: type=gha,scope=tandoor
+          cache-to: type=gha,mode=max,scope=tandoor
+
+      - name: MCP image metadata
+        id: mcp_meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/kinghacker9000/recipes-mcp
+          tags: |
+            type=raw,value=develop
+            type=sha,prefix=sha-,format=long
+          labels: |
+            org.opencontainers.image.source=https://github.com/KingHacker9000/recipes
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Build and push MCP image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.mcp
+          pull: true
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.mcp_meta.outputs.tags }}
+          labels: ${{ steps.mcp_meta.outputs.labels }}
+          cache-from: type=gha,scope=mcp
+          cache-to: type=gha,mode=max,scope=mcp
