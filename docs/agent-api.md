@@ -59,7 +59,9 @@ USDA_FDC_API_KEY=<data.gov API key>
 specific candidate is submitted to `foods/{id}/nutrition/fdc/verify/` with
 `confirmed=true`. Verified records are cached, saved as a nutrition profile and the
 FDC ID is stored on the Tandoor food. A confirmed FDC ID that later returns 404 is
-invalidated/cleared rather than silently reused.
+invalidated/cleared rather than silently reused. Reference foods are normalized on
+a 100 g basis; branded foods preserve a documented 100 g or 100 ml basis. Ambiguous
+branded serving units are rejected instead of being guessed.
 
 Package-label photos should normally be interpreted by the external agent and saved
 through `nutrition-profiles/` as a verified `user_label` profile. This keeps image
@@ -96,7 +98,7 @@ nutrition coverage is insufficient to verify that target.
 Reconciliation modes:
 
 - `augment` (default): may add/increase observed stock but never removes unseen stock.
-- `snapshot`: one explicit inventory location is treated as a complete snapshot and may propose decreases/removals. Apply still requires confirmation and an unchanged inventory revision.
+- `snapshot`: one explicit inventory location is treated as a complete snapshot and may propose decreases/removals. Apply still requires confirmation and an unchanged inventory revision. A snapshot with any unresolved vision observation is blocked from apply.
 
 Recipe pantry checks accept `target_servings`, consume compatible inventory entries
 in expiry order, and return complete/partial/missing/unknown quantities.
@@ -108,10 +110,11 @@ in expiry order, and return complete/partial/missing/unknown quantities.
 - `PATCH|DELETE shopping/entries/{id}/`
 - `GET meal-types/`
 - `GET|POST meal-plans/`
-- `DELETE meal-plans/{id}/`
+- `PATCH|DELETE meal-plans/{id}/`
 
-Deletes require explicit `confirmed=true`. Shopping entry updates require the
-`expected_updated_at` revision returned by the read endpoint.
+Deletes require explicit `confirmed=true`. Shopping-entry and meal-plan updates
+require the `expected_updated_at` revision returned by the corresponding read.
+Meal-plan recipe references are limited to recipes visible to the authenticated user.
 
 ## Nutrition endpoints
 
@@ -164,14 +167,15 @@ and its minimal dependencies.
 
 The MCP registry exposes semantic tools for:
 
-- recipe search/read/nutrition/practical scaling/recommendation
+- recipe search/read/create/update/clone/nutrition/practical scaling/recommendation
 - pantry availability, explicit inventory deltas and photo reconciliation
 - configured substitution context
 - variant preview/save
 - Tandoor food and nutrition-label persistence
 - USDA candidate search/verification
 - shopping lists and entries
-- meal types and meal plans
+- meal types and meal-plan list/create/update/delete
+- audit history
 
 There is no generic fetch, arbitrary URL, SQL, database, shell, Docker or filesystem
 tool.
