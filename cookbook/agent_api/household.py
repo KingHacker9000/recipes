@@ -1,3 +1,5 @@
+import hashlib
+import json
 from datetime import datetime, time
 from decimal import Decimal, InvalidOperation
 
@@ -75,6 +77,21 @@ def meal_type_payload(obj):
     }
 
 
+def meal_plan_revision(obj):
+    canonical = {
+        'id': obj.id,
+        'recipe_id': obj.recipe_id,
+        'servings': str(obj.servings),
+        'title': obj.title or '',
+        'meal_type_id': obj.meal_type_id,
+        'note': obj.note or '',
+        'from_date': obj.from_date.isoformat(),
+        'to_date': obj.to_date.isoformat(),
+    }
+    encoded = json.dumps(canonical, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def meal_plan_payload(obj):
     return {
         'id': obj.id,
@@ -88,8 +105,7 @@ def meal_plan_payload(obj):
         'from_date': obj.from_date.isoformat(),
         'to_date': obj.to_date.isoformat(),
         'created_by_id': obj.created_by_id,
-        'created_at': obj.created_at.isoformat() if obj.created_at else None,
-        'updated_at': obj.updated_at.isoformat() if obj.updated_at else None,
+        'revision': meal_plan_revision(obj),
     }
 
 
@@ -232,10 +248,10 @@ def create_meal_plan(request, payload):
 
 
 def update_meal_plan(request, obj, payload):
-    expected = str(payload.get('expected_updated_at') or '').strip()
+    expected = str(payload.get('expected_revision') or '').strip()
     if not expected:
-        raise AgentHouseholdInputError('expected_updated_at is required.')
-    if not obj.updated_at or obj.updated_at.isoformat() != expected:
+        raise AgentHouseholdInputError('expected_revision is required.')
+    if meal_plan_revision(obj) != expected:
         raise AgentHouseholdInputError('Meal plan changed since it was read.')
 
     meal_type = obj.meal_type
