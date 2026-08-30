@@ -8,12 +8,14 @@ on:
     paths:
       - cookbook/agent_api/**
       - cookbook/views/agent_api.py
+      - cookbook/views/agent_pantry.py
       - cookbook/apps.py
       - cookbook/urls.py
       - cookbook/social_import/models.py
       - cookbook/migrations/0244_agent_api_nutrition_foundation.py
       - cookbook/tests/other/test_agent_nutrition.py
       - cookbook/tests/other/test_agent_recipes.py
+      - cookbook/tests/other/test_agent_pantry.py
       - docs/agent-api.md
       - .github/workflows/agent-api-ci.yml
       - requirements.txt
@@ -23,12 +25,14 @@ on:
     paths:
       - cookbook/agent_api/**
       - cookbook/views/agent_api.py
+      - cookbook/views/agent_pantry.py
       - cookbook/apps.py
       - cookbook/urls.py
       - cookbook/social_import/models.py
       - cookbook/migrations/0244_agent_api_nutrition_foundation.py
       - cookbook/tests/other/test_agent_nutrition.py
       - cookbook/tests/other/test_agent_recipes.py
+      - cookbook/tests/other/test_agent_pantry.py
       - docs/agent-api.md
       - .github/workflows/agent-api-ci.yml
       - requirements.txt
@@ -68,6 +72,7 @@ jobs:
           python -m compileall -q \
             cookbook/agent_api \
             cookbook/views/agent_api.py \
+            cookbook/views/agent_pantry.py \
             cookbook/apps.py \
             cookbook/urls.py \
             cookbook/social_import/models.py \
@@ -84,6 +89,7 @@ jobs:
           pytest -o addopts='' \
             cookbook/tests/other/test_agent_nutrition.py \
             cookbook/tests/other/test_agent_recipes.py \
+            cookbook/tests/other/test_agent_pantry.py \
             -q
 
   alpine-multiplatform-image:
