@@ -127,6 +127,9 @@ urlpatterns = [
     path('api/social-import/<int:pk>/retry/', social_import.SocialImportRetryView.as_view(), name='api_social_import_retry'),
     path('api/social-import/<int:pk>/save/', social_import.SocialImportSaveView.as_view(), name='api_social_import_save'),
 
+    # Stable semantic boundary for MCP/ChatGPT and future agent clients.
+    path('api/agent/', include('cookbook.agent_api.urls')),
+
     path('telegram/setup/<int:pk>', telegram.setup_bot, name='telegram_setup'),
     path('telegram/remove/<int:pk>', telegram.remove_bot, name='telegram_remove'),
     path('telegram/hook/<slug:token>/', telegram.hook, name='telegram_hook'),
