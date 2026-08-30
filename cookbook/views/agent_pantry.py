@@ -1,4 +1,4 @@
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from rest_framework import status
 from rest_framework.response import Response
@@ -52,6 +52,26 @@ def _input_error(exc, conflict=False):
         {'error': True, 'msg': str(exc)},
         status=status.HTTP_409_CONFLICT if conflict else status.HTTP_400_BAD_REQUEST,
     )
+
+
+def _snapshot_has_unresolved(proposal):
+    if (proposal.payload or {}).get('mode') != 'snapshot':
+        return False
+    summary = (proposal.preview or {}).get('summary') or {}
+    return int(summary.get('unresolved_actions') or 0) > 0
+
+
+def _mark_snapshot_blocked(proposal):
+    if not _snapshot_has_unresolved(proposal):
+        return proposal
+    preview = dict(proposal.preview or {})
+    preview['apply_blocked'] = True
+    preview['blocked_reason'] = (
+        'Full snapshot contains unresolved observations. Resolve them and create a new snapshot preview before any unseen inventory can be removed.'
+    )
+    proposal.preview = preview
+    proposal.save(update_fields=['preview', 'updated_at'])
+    return proposal
 
 
 class AgentPantryLocationCollectionView(APIView):
@@ -133,22 +153,28 @@ class AgentPantryReconcilePreviewView(APIView):
         mode = str(request.data.get('mode') or 'augment').strip().lower()
         default_location_id = request.data.get('default_location_id')
         try:
-            proposal = create_reconcile_proposal(
-                request,
-                observations,
-                mode=mode,
-                default_location_id=default_location_id,
-            )
-            response = proposal_payload(proposal)
-            record_agent_event(
-                request,
-                action='pantry.reconcile.preview',
-                target_type='AgentProposal',
-                target_id=proposal.proposal_id,
-                after={'status': proposal.status, 'summary': proposal.preview.get('summary', {})},
-                response=response,
-                metadata={'mode': mode, 'location_ids': proposal.payload.get('location_ids', [])},
-            )
+            with transaction.atomic():
+                proposal = create_reconcile_proposal(
+                    request,
+                    observations,
+                    mode=mode,
+                    default_location_id=default_location_id,
+                )
+                proposal = _mark_snapshot_blocked(proposal)
+                response = proposal_payload(proposal)
+                record_agent_event(
+                    request,
+                    action='pantry.reconcile.preview',
+                    target_type='AgentProposal',
+                    target_id=proposal.proposal_id,
+                    after={
+                        'status': proposal.status,
+                        'summary': proposal.preview.get('summary', {}),
+                        'apply_blocked': bool(proposal.preview.get('apply_blocked', False)),
+                    },
+                    response=response,
+                    metadata={'mode': mode, 'location_ids': proposal.payload.get('location_ids', [])},
+                )
         except AgentPantryInputError as exc:
             return _input_error(exc)
         except IntegrityError:
@@ -183,28 +209,36 @@ class AgentProposalApplyView(APIView):
                     .first())
         if proposal is None:
             return Response(status=status.HTTP_404_NOT_FOUND)
+        if _snapshot_has_unresolved(proposal):
+            return _input_error(
+                AgentPantryInputError(
+                    'Full snapshot contains unresolved observations. Resolve them and create a new snapshot preview before applying inventory removals.'
+                ),
+                conflict=True,
+            )
 
         before = proposal_payload(proposal)
         try:
-            proposal = apply_reconcile_proposal(
-                request,
-                proposal,
-                confirmed=request.data.get('confirmed') is True,
-            )
-            response = proposal_payload(proposal)
-            record_agent_event(
-                request,
-                action='pantry.reconcile.apply',
-                target_type='AgentProposal',
-                target_id=proposal.proposal_id,
-                before=before,
-                after=response,
-                response=response,
-                metadata={
-                    'mode': proposal.payload.get('mode'),
-                    'applied_count': (proposal.result or {}).get('applied_count', 0),
-                },
-            )
+            with transaction.atomic():
+                proposal = apply_reconcile_proposal(
+                    request,
+                    proposal,
+                    confirmed=request.data.get('confirmed') is True,
+                )
+                response = proposal_payload(proposal)
+                record_agent_event(
+                    request,
+                    action='pantry.reconcile.apply',
+                    target_type='AgentProposal',
+                    target_id=proposal.proposal_id,
+                    before=before,
+                    after=response,
+                    response=response,
+                    metadata={
+                        'mode': proposal.payload.get('mode'),
+                        'applied_count': (proposal.result or {}).get('applied_count', 0),
+                    },
+                )
         except AgentPantryInputError as exc:
             message = str(exc).lower()
             conflict = any(term in message for term in ('changed since', 'expired', 'already ', 'no longer pending', 'disappeared'))
