@@ -23,6 +23,9 @@ class CookbookConfig(AppConfig):
             FoodNutritionProfile,
             RecipeVariantLink,
         )
+        # Keep deterministic Agent nutrition mirrored into Tandoor's native
+        # recipe Properties without coupling the core recipe models to Agent code.
+        import cookbook.agent_api.signals  # noqa: F401
 
         if not settings.DISABLE_EXTERNAL_CONNECTORS:
             from cookbook.connectors.connector_manager import ConnectorManager  # Needs to be here to prevent loading race condition of oauth2 modules in models.py
