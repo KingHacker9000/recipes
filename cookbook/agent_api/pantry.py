@@ -121,7 +121,14 @@ def _recipe_ingredients(recipe):
     return ingredients
 
 
-def check_recipe_against_pantry(recipe, space):
+def check_recipe_against_pantry(recipe, space, target_servings=None):
+    stored_servings = Decimal(str(recipe.servings if recipe.servings and recipe.servings > 0 else 1))
+    if target_servings in (None, ''):
+        target = stored_servings
+    else:
+        target = _decimal(target_servings, 'target_servings', minimum='0.000001')
+    scale_factor = target / stored_servings
+
     entries = list(inventory_queryset(space).filter(amount__gt=0).order_by('expires', 'id'))
     remaining = {entry.id: Decimal(str(entry.amount)) for entry in entries}
     by_food = {}
@@ -134,7 +141,8 @@ def check_recipe_against_pantry(recipe, space):
     considered = 0
 
     for ingredient in _recipe_ingredients(recipe):
-        required = Decimal(str(ingredient.amount or 0))
+        original_required = Decimal(str(ingredient.amount or 0))
+        required = original_required * scale_factor
         required_unit = ingredient.unit.name if ingredient.unit_id else ''
         if ingredient.no_amount or required <= 0:
             counts['ignored'] += 1
@@ -142,6 +150,7 @@ def check_recipe_against_pantry(recipe, space):
                 'ingredient_id': ingredient.id,
                 'food_id': ingredient.food_id,
                 'food': ingredient.food.name if ingredient.food_id else '',
+                'original_required_amount': _number(original_required),
                 'required_amount': _number(required),
                 'required_unit': required_unit,
                 'status': 'ignored',
@@ -155,6 +164,7 @@ def check_recipe_against_pantry(recipe, space):
                 'ingredient_id': ingredient.id,
                 'food_id': None,
                 'food': '',
+                'original_required_amount': _number(original_required),
                 'required_amount': _number(required),
                 'required_unit': required_unit,
                 'status': 'unknown',
@@ -219,6 +229,7 @@ def check_recipe_against_pantry(recipe, space):
             'ingredient_id': ingredient.id,
             'food_id': ingredient.food_id,
             'food': ingredient.food.name,
+            'original_required_amount': _number(original_required),
             'required_amount': _number(required),
             'required_unit': required_unit,
             'available_amount': _number(available),
@@ -232,6 +243,9 @@ def check_recipe_against_pantry(recipe, space):
     return {
         'recipe_id': recipe.id,
         'recipe_name': recipe.name,
+        'stored_servings': _number(stored_servings),
+        'target_servings': _number(target),
+        'scale_factor': _number(scale_factor),
         'can_make': considered > 0 and counts['complete'] == considered,
         'coverage': {
             **counts,
@@ -269,7 +283,10 @@ def _resolve_unit(observation, space):
     name = str(observation.get('unit_name') or observation.get('unit') or '').strip()
     if not name:
         return None
-    return Unit.objects.filter(name__iexact=name, space=space).first()
+    unit = Unit.objects.filter(name__iexact=name, space=space).first()
+    if unit is None:
+        raise AgentPantryInputError(f'Unit {name!r} was not found in the active space.')
+    return unit
 
 
 def _resolve_location(observation, space, default_location_id=None):
@@ -288,16 +305,21 @@ def _resolve_location(observation, space, default_location_id=None):
     return location
 
 
-def _inventory_revision(space, location_ids):
-    rows = (inventory_queryset(space)
-            .filter(inventory_location_id__in=sorted(set(location_ids)))
-            .order_by('id')
-            .values_list('id', 'amount', 'updated_at', 'food_id', 'unit_id', 'inventory_location_id'))
+def _revision_for_entries(entries):
     raw = '|'.join(
-        f'{row[0]}:{row[1]}:{row[2].isoformat() if row[2] else ""}:{row[3]}:{row[4]}:{row[5]}'
-        for row in rows
+        f'{entry.id}:{entry.amount}:{entry.updated_at.isoformat() if entry.updated_at else ""}:{entry.food_id}:{entry.unit_id}:{entry.inventory_location_id}'
+        for entry in sorted(entries, key=lambda item: item.id)
     )
     return hashlib.sha256(raw.encode('utf-8')).hexdigest()
+
+
+def _inventory_revision(space, location_ids):
+    entries = list(
+        inventory_queryset(space)
+        .filter(inventory_location_id__in=sorted(set(location_ids)))
+        .order_by('id')
+    )
+    return _revision_for_entries(entries)
 
 
 def _matching_entry(space, location, food, unit):
@@ -361,7 +383,7 @@ def create_reconcile_proposal(request, observations, *, mode='augment', default_
                 'location_id': location.id,
                 'location': location.name,
                 'amount': _number(amount),
-                'unit': unit.name if unit else str(observation.get('unit_name') or observation.get('unit') or ''),
+                'unit': unit.name if unit else '',
                 'confidence': _number(confidence),
                 'reason': 'food_not_found',
             })
@@ -493,10 +515,6 @@ def apply_reconcile_proposal(request, proposal, *, confirmed=False):
         raise AgentPantryInputError('Proposal has expired; create a new preview.')
 
     location_ids = proposal.payload.get('location_ids') or []
-    current_revision = _inventory_revision(request.space, location_ids)
-    if current_revision != proposal.revision_key:
-        raise AgentPantryInputError('Inventory changed since this proposal was created; create a new preview.')
-
     results = []
     with transaction.atomic():
         proposal = (AgentProposal.objects
@@ -506,12 +524,16 @@ def apply_reconcile_proposal(request, proposal, *, confirmed=False):
         if proposal is None or proposal.status != AgentProposal.STATUS_PENDING:
             raise AgentPantryInputError('Proposal is no longer pending.')
 
-        locked_entries = {
-            entry.id: entry
-            for entry in inventory_queryset(request.space)
+        locked_entry_list = list(
+            inventory_queryset(request.space)
             .select_for_update()
             .filter(inventory_location_id__in=location_ids)
-        }
+            .order_by('id')
+        )
+        if _revision_for_entries(locked_entry_list) != proposal.revision_key:
+            raise AgentPantryInputError('Inventory changed since this proposal was created; create a new preview.')
+        locked_entries = {entry.id: entry for entry in locked_entry_list}
+
         for action in proposal.preview.get('actions') or []:
             action_type = action.get('type')
             if action_type not in ('add', 'update', 'set_zero'):
