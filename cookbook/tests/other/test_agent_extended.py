@@ -1,10 +1,16 @@
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
+from django.contrib import auth
+from django_scopes import scopes_disabled
 
-from cookbook.agent_api.nutrition_sources import nutrition_profile_from_fdc
+from cookbook.agent_api.household import accessible_recipe_queryset
+from cookbook.agent_api.nutrition_sources import FoodDataCentralError, nutrition_profile_from_fdc, search_foods
 from cookbook.agent_api.recommendations import _macro_check
 from cookbook.agent_api.scaling import _round_to_step
+from cookbook.models import Recipe
+from cookbook.views.agent_pantry import _snapshot_has_unresolved
 from tandoor_mcp.client import TandoorAgentClient, TandoorAgentClientError
 from tandoor_mcp.server import TOOLS
 
@@ -40,6 +46,11 @@ def test_fdc_parser_does_not_invent_missing_nutrients():
     assert result['fat_g'] is None
 
 
+def test_fdc_search_rejects_bad_limit_before_network():
+    with pytest.raises(FoodDataCentralError, match='limit must be an integer'):
+        search_foods('chicken', page_size='many')
+
+
 @pytest.mark.parametrize(
     ('value', 'step', 'mode', 'expected'),
     [
@@ -65,6 +76,39 @@ def test_recommendation_macro_fit_requires_full_coverage():
     assert result['checks'][1]['verifiable'] is False
     assert result['all_verifiable'] is False
     assert result['all_satisfied'] is False
+
+
+def test_snapshot_with_unresolved_observations_is_blocked():
+    proposal = SimpleNamespace(
+        payload={'mode': 'snapshot'},
+        preview={'summary': {'unresolved_actions': 1}},
+    )
+    assert _snapshot_has_unresolved(proposal) is True
+
+
+def test_augment_with_unresolved_observations_is_not_snapshot_blocked():
+    proposal = SimpleNamespace(
+        payload={'mode': 'augment'},
+        preview={'summary': {'unresolved_actions': 3}},
+    )
+    assert _snapshot_has_unresolved(proposal) is False
+
+
+def test_private_recipe_queryset_hides_unshared_recipe(space_1, u1_s1, u2_s1):
+    viewer = auth.get_user(u1_s1)
+    owner = auth.get_user(u2_s1)
+    with scopes_disabled():
+        private_recipe = Recipe.objects.create(
+            name='Private meal-plan safety test',
+            servings=1,
+            private=True,
+            created_by=owner,
+            space=space_1,
+        )
+        request = SimpleNamespace(user=viewer, space=space_1)
+        assert accessible_recipe_queryset(request).filter(pk=private_recipe.pk).exists() is False
+        private_recipe.shared.add(viewer)
+        assert accessible_recipe_queryset(request).filter(pk=private_recipe.pk).exists() is True
 
 
 def test_mcp_registry_has_no_generic_http_or_sql_escape_hatch():
