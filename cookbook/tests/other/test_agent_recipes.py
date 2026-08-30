@@ -1,11 +1,15 @@
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
+from django.contrib import auth
+from django_scopes import scopes_disabled
 
 from cookbook.agent_api.recipes import (
     AgentRecipeInputError,
     evaluate_macro_constraints,
     per_serving_from_analysis,
+    save_recipe_from_agent,
 )
 
 
@@ -129,3 +133,92 @@ def test_constraint_targets_must_be_numeric():
             complete_coverage(),
             {'calories_max': 'about five hundred'},
         )
+
+
+def test_partial_recipe_update_changes_existing_ingredients_without_dropping_siblings(
+    space_1,
+    u1_s1,
+    recipe_1_s1,
+):
+    """Regression for the MCP recipe_update that was misreported as HTTP 409.
+
+    Decimal normalization previously reached CustomDecimalField as a Decimal,
+    which it converted to None. The nested serializer then attempted to write a
+    NULL ingredient amount, and the view's broad IntegrityError handler labeled
+    that database error as an idempotency conflict. A partial nested list could
+    also remove omitted sibling ingredients.
+    """
+    user = auth.get_user(u1_s1)
+
+    with scopes_disabled():
+        recipe = recipe_1_s1
+        step = recipe.steps.order_by('order', 'id').first()
+        ingredients = list(step.ingredients.order_by('order', 'id'))
+        assert len(ingredients) >= 3
+
+        first, second = ingredients[:2]
+        first.amount = Decimal('0')
+        second.amount = Decimal('0')
+        first.save(update_fields=['amount'])
+        second.save(update_fields=['amount'])
+
+        untouched = ingredients[2]
+        untouched_amount = untouched.amount
+        untouched_note = untouched.note
+
+        original_step_ids = set(recipe.steps.values_list('id', flat=True))
+        original_ingredient_ids = set(step.ingredients.values_list('id', flat=True))
+
+        request = SimpleNamespace(
+            space=space_1,
+            user=user,
+            user_space=user.userspace_set.filter(space=space_1).first(),
+            headers={
+                'X-Agent-Client': 'tandoor-mcp',
+                'X-Request-ID': 'recipe-update-regression',
+                'Idempotency-Key': 'fix-mugcake-nutrition-qty-regression',
+            },
+            method='PATCH',
+            path=f'/api/agent/recipes/{recipe.id}/',
+            data={},
+            query_params={},
+        )
+
+        save_recipe_from_agent(
+            request,
+            {
+                'steps': [
+                    {
+                        'id': step.id,
+                        'ingredients': [
+                            {
+                                'id': first.id,
+                                'food_id': first.food_id,
+                                'unit_id': first.unit_id,
+                                'amount': 1,
+                            },
+                            {
+                                'id': second.id,
+                                'food_id': second.food_id,
+                                'unit_id': second.unit_id,
+                                'amount': 2,
+                            },
+                        ],
+                    },
+                ],
+            },
+            instance=recipe,
+            partial=True,
+        )
+
+        first.refresh_from_db()
+        second.refresh_from_db()
+        untouched.refresh_from_db()
+        recipe.refresh_from_db()
+
+        assert first.amount == Decimal('1')
+        assert second.amount == Decimal('2')
+        assert untouched.amount == untouched_amount
+        assert untouched.note == untouched_note
+        assert set(recipe.steps.values_list('id', flat=True)) == original_step_ids
+        assert set(step.ingredients.values_list('id', flat=True)) == original_ingredient_ids
