@@ -112,8 +112,10 @@ in expiry order, and return complete/partial/missing/unknown quantities.
 - `GET|POST meal-plans/`
 - `PATCH|DELETE meal-plans/{id}/`
 
-Deletes require explicit `confirmed=true`. Shopping-entry and meal-plan updates
-require the `expected_updated_at` revision returned by the corresponding read.
+Deletes require explicit `confirmed=true`. Shopping-entry updates require the
+`expected_updated_at` value returned by the read. Tandoor's native `MealPlan` model
+has no update timestamp, so meal-plan reads return a deterministic `revision` hash
+of the persisted plan fields and PATCH requires that value as `expected_revision`.
 Meal-plan recipe references are limited to recipes visible to the authenticated user.
 
 ## Nutrition endpoints
