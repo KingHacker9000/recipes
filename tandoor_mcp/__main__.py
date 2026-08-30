@@ -1,4 +1,4 @@
-from tandoor_mcp.server import main
+from tandoor_mcp.complete import main
 
 
 if __name__ == '__main__':
