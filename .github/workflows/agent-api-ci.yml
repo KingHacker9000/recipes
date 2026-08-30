@@ -10,6 +10,7 @@ on:
       - cookbook/views/agent_pantry.py
       - cookbook/views/agent_extended.py
       - cookbook/views/agent_actions.py
+      - cookbook/views/agent_meal_plans.py
       - tandoor_mcp/**
       - cookbook/apps.py
       - cookbook/urls.py
@@ -19,6 +20,7 @@ on:
       - cookbook/tests/other/test_agent_recipes.py
       - cookbook/tests/other/test_agent_pantry.py
       - cookbook/tests/other/test_agent_extended.py
+      - cookbook/tests/other/test_agent_meal_plans.py
       - docs/agent-api.md
       - .github/workflows/agent-api-ci.yml
       - requirements-mcp.txt
@@ -32,6 +34,7 @@ on:
       - cookbook/views/agent_pantry.py
       - cookbook/views/agent_extended.py
       - cookbook/views/agent_actions.py
+      - cookbook/views/agent_meal_plans.py
       - tandoor_mcp/**
       - cookbook/apps.py
       - cookbook/urls.py
@@ -41,6 +44,7 @@ on:
       - cookbook/tests/other/test_agent_recipes.py
       - cookbook/tests/other/test_agent_pantry.py
       - cookbook/tests/other/test_agent_extended.py
+      - cookbook/tests/other/test_agent_meal_plans.py
       - docs/agent-api.md
       - .github/workflows/agent-api-ci.yml
       - requirements-mcp.txt
@@ -89,6 +93,7 @@ jobs:
             cookbook/views/agent_pantry.py \
             cookbook/views/agent_extended.py \
             cookbook/views/agent_actions.py \
+            cookbook/views/agent_meal_plans.py \
             tandoor_mcp \
             cookbook/apps.py \
             cookbook/urls.py \
@@ -104,14 +109,15 @@ jobs:
       - name: Verify MCP registry imports
         run: |
           python - <<'PY'
-          from tandoor_mcp.server import TOOLS, build_server
-          assert len(TOOLS) >= 30
+          from tandoor_mcp.complete import TOOLS, build_server
+          assert len(TOOLS) >= 31
           assert 'recipe_create' in TOOLS
           assert 'recipe_update' in TOOLS
           assert 'recipe_save_variant' in TOOLS
           assert 'pantry_reconcile_preview' in TOOLS
           assert 'pantry_locations' in TOOLS
           assert 'proposal_get' in TOOLS
+          assert 'meal_plan_update' in TOOLS
           assert build_server() is not None
           print(f'MCP tools: {len(TOOLS)}')
           PY
@@ -123,6 +129,7 @@ jobs:
             cookbook/tests/other/test_agent_recipes.py \
             cookbook/tests/other/test_agent_pantry.py \
             cookbook/tests/other/test_agent_extended.py \
+            cookbook/tests/other/test_agent_meal_plans.py \
             -q
 
   alpine-multiplatform-image:
