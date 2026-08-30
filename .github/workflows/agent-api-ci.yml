@@ -23,7 +23,9 @@ on:
       - docs/agent-api.md
       - .github/workflows/agent-api-ci.yml
       - requirements.txt
+      - requirements-mcp.txt
       - Dockerfile
+      - Dockerfile.mcp
   pull_request:
     branches: [develop]
     paths:
@@ -44,7 +46,9 @@ on:
       - docs/agent-api.md
       - .github/workflows/agent-api-ci.yml
       - requirements.txt
+      - requirements-mcp.txt
       - Dockerfile
+      - Dockerfile.mcp
 
 permissions:
   contents: read
@@ -124,6 +128,13 @@ jobs:
       - name: Build production Alpine image for x86-64 and Pi ARM64
         run: |
           docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --progress=plain \
+            .
+      - name: Build isolated MCP image for x86-64 and Pi ARM64
+        run: |
+          docker buildx build \
+            --file Dockerfile.mcp \
             --platform linux/amd64,linux/arm64 \
             --progress=plain \
             .
