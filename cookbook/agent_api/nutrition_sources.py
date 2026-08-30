@@ -8,6 +8,7 @@ from django.core.cache import cache
 FDC_BASE_URL = 'https://api.nal.usda.gov/fdc/v1'
 FDC_SEARCH_TTL = 12 * 60 * 60
 FDC_DETAIL_TTL = 7 * 24 * 60 * 60
+FDC_DATA_TYPES = ('Foundation', 'SR Legacy', 'Survey (FNDDS)', 'Branded')
 
 
 class FoodDataCentralError(RuntimeError):
@@ -49,8 +50,14 @@ def search_foods(query, *, page_size=10, data_types=None):
     query = str(query or '').strip()
     if len(query) < 2:
         raise FoodDataCentralError('query must contain at least two characters.')
-    page_size = min(max(int(page_size), 1), 25)
-    data_types = data_types or ['Foundation', 'SR Legacy', 'Survey (FNDDS)', 'Branded']
+    try:
+        page_size = min(max(int(page_size), 1), 25)
+    except (TypeError, ValueError):
+        raise FoodDataCentralError('limit must be an integer between 1 and 25.')
+    data_types = list(data_types or FDC_DATA_TYPES)
+    if not data_types or any(value not in FDC_DATA_TYPES for value in data_types):
+        raise FoodDataCentralError('Unsupported FoodData Central data type.')
+
     cache_key = f'agent:fdc:search:{query.lower()}:{page_size}:{"|".join(data_types)}'
     cached = cache.get(cache_key)
     if cached is not None:
