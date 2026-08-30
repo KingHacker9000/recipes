@@ -3,12 +3,12 @@ from tandoor_mcp import server as _server
 
 _server.TOOLS['meal_plan_update'] = _server.ToolSpec(
     'Update meal plan',
-    'Update an accessible meal plan using its optimistic updated_at revision.',
+    'Update an accessible meal plan using the deterministic revision returned by meal_plans.',
     'PATCH',
     '/api/agent/meal-plans/{meal_plan_id}/',
     _server.obj({
         'meal_plan_id': _server.integer('Meal plan ID.'),
-        'expected_updated_at': _server.string('Revision returned by meal_plans.'),
+        'expected_revision': _server.string('Revision returned by meal_plans.'),
         'recipe_id': _server.integer('Optional accessible recipe ID; omit to leave unchanged.'),
         'meal_type_id': _server.integer('Optional meal type ID.'),
         'servings': _server.number('Optional planned servings.'),
@@ -17,7 +17,7 @@ _server.TOOLS['meal_plan_update'] = _server.ToolSpec(
         'from_date': _server.string('Optional ISO date/datetime.'),
         'to_date': _server.string('Optional ISO date/datetime.'),
         **_server.IDEMPOTENCY,
-    }, ['meal_plan_id', 'expected_updated_at']),
+    }, ['meal_plan_id', 'expected_revision']),
     True,
     ('meal_plan_id',),
 )
