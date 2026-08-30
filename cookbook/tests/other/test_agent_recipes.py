@@ -1,11 +1,18 @@
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
+from django.contrib import auth
+from django.db import IntegrityError
+from django_scopes import scopes_disabled
 
+from cookbook.agent_api.audit import record_agent_event
+from cookbook.agent_api.models import AgentAuditEvent
 from cookbook.agent_api.recipes import (
     AgentRecipeInputError,
     evaluate_macro_constraints,
     per_serving_from_analysis,
+    save_recipe_from_agent,
 )
 
 
@@ -129,3 +136,137 @@ def test_constraint_targets_must_be_numeric():
             complete_coverage(),
             {'calories_max': 'about five hundred'},
         )
+
+
+def _agent_request(space, user, key, payload=None):
+    return SimpleNamespace(
+        space=space,
+        user=user,
+        user_space=None,
+        headers={
+            'X-Agent-Client': 'tandoor-mcp',
+            'X-Request-ID': 'agent-test-request',
+            'Idempotency-Key': key,
+        },
+        method='PATCH',
+        path='/api/agent/recipes/1/',
+        data=payload or {},
+        query_params={},
+    )
+
+
+def test_failed_idempotency_key_can_be_retried_for_same_mutation(space_1, u1_s1):
+    user = auth.get_user(u1_s1)
+    request = _agent_request(
+        space_1,
+        user,
+        'retry-recipe-update',
+        {'expected_updated_at': 'revision-1', 'recipe': {'name': 'Updated'}},
+    )
+
+    with scopes_disabled():
+        failed = AgentAuditEvent.objects.create(
+            client_id='tandoor-mcp',
+            action='recipe.update',
+            request_id='failed-request',
+            idempotency_key='retry-recipe-update',
+            success=False,
+            error='temporary failure',
+            created_by=user,
+            space=space_1,
+        )
+
+        success = record_agent_event(
+            request,
+            action='recipe.update',
+            target_type='Recipe',
+            target_id='1',
+            response={'id': 1, 'name': 'Updated'},
+        )
+
+        failed.refresh_from_db()
+        assert failed.idempotency_key == ''
+        assert failed.metadata['released_idempotency_key'] == 'retry-recipe-update'
+        assert success.idempotency_key == 'retry-recipe-update'
+        assert success.success is True
+        assert success.metadata['idempotency_fingerprint']
+
+
+def test_failed_idempotency_key_rejects_different_mutation(space_1, u1_s1):
+    user = auth.get_user(u1_s1)
+    request = _agent_request(space_1, user, 'cross-action-key', {'recipe': {'name': 'Updated'}})
+
+    with scopes_disabled():
+        AgentAuditEvent.objects.create(
+            client_id='tandoor-mcp',
+            action='nutrition.profile.create',
+            request_id='failed-request',
+            idempotency_key='cross-action-key',
+            success=False,
+            created_by=user,
+            space=space_1,
+        )
+
+        with pytest.raises(IntegrityError, match='failed action'):
+            record_agent_event(
+                request,
+                action='recipe.update',
+                target_type='Recipe',
+                target_id='1',
+            )
+
+
+def test_partial_recipe_update_changes_existing_ingredients_without_dropping_siblings(
+    space_1,
+    u1_s1,
+    recipe_1_s1,
+):
+    user = auth.get_user(u1_s1)
+
+    with scopes_disabled():
+        recipe = recipe_1_s1
+        step = recipe.steps.order_by('order', 'id').first()
+        ingredients = list(step.ingredients.order_by('order', 'id'))
+        assert len(ingredients) >= 3
+
+        original_step_ids = set(recipe.steps.values_list('id', flat=True))
+        original_ingredient_ids = set(step.ingredients.values_list('id', flat=True))
+
+        request = _agent_request(space_1, user, 'nested-update-regression')
+        request.user_space = user.userspace_set.filter(space=space_1).first()
+
+        save_recipe_from_agent(
+            request,
+            {
+                'steps': [
+                    {
+                        'id': step.id,
+                        'ingredients': [
+                            {
+                                'id': ingredients[0].id,
+                                'food_id': ingredients[0].food_id,
+                                'unit_id': ingredients[0].unit_id,
+                                'amount': 1,
+                            },
+                            {
+                                'id': ingredients[1].id,
+                                'food_id': ingredients[1].food_id,
+                                'unit_id': ingredients[1].unit_id,
+                                'amount': 2,
+                            },
+                        ],
+                    },
+                ],
+            },
+            instance=recipe,
+            partial=True,
+        )
+
+        ingredients[0].refresh_from_db()
+        ingredients[1].refresh_from_db()
+        recipe.refresh_from_db()
+
+        assert ingredients[0].amount == Decimal('1')
+        assert ingredients[1].amount == Decimal('2')
+        assert set(recipe.steps.values_list('id', flat=True)) == original_step_ids
+        assert set(step.ingredients.values_list('id', flat=True)) == original_ingredient_ids
