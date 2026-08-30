@@ -1,10 +1,10 @@
 from django.urls import path
 
-from cookbook.views import agent_actions, agent_api, agent_extended, agent_media, agent_meal_plans, agent_pantry
+from cookbook.views import agent_actions, agent_api, agent_extended, agent_health, agent_media, agent_meal_plans, agent_pantry
 
 
 urlpatterns = [
-    path('health/', agent_extended.AgentCompleteHealthView.as_view(), name='api_agent_health'),
+    path('health/', agent_health.AgentHealthView.as_view(), name='api_agent_health'),
     path('recipes/', agent_api.AgentRecipeCollectionView.as_view(), name='api_agent_recipes'),
     path('recipes/recommend/', agent_extended.AgentRecipeRecommendationView.as_view(), name='api_agent_recipe_recommend'),
     path('recipes/<int:pk>/', agent_api.AgentRecipeDetailView.as_view(), name='api_agent_recipe_detail'),
