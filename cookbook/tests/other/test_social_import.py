@@ -7,6 +7,7 @@ from cookbook.social_import.acquisition import (
     identify_platform,
 )
 from cookbook.social_import.service import normalize_extraction
+from cookbook.views.social_import import _prepare_recipe_data_for_save
 
 
 @pytest.mark.parametrize(
@@ -66,3 +67,20 @@ def test_normalize_extraction_keeps_uncertainty_explicit():
     assert value['ingredients'][1]['confidence'] == 0.0
     assert len(value['ingredients']) == 2
     assert value['steps'][0]['text'] == 'Cook it'
+
+
+def test_unknown_servings_use_native_scaling_baseline_without_claiming_yield():
+    recipe_data = {'servings': None, 'servings_text': 'None'}
+
+    result = _prepare_recipe_data_for_save({'servings': None}, recipe_data)
+
+    assert result['servings'] == 1
+    assert result['servings_text'] == ''
+
+
+def test_known_servings_are_preserved_for_save():
+    recipe_data = {'servings': None, 'servings_text': ''}
+
+    result = _prepare_recipe_data_for_save({'servings': 6}, recipe_data)
+
+    assert result['servings'] == 6
