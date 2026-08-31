@@ -168,6 +168,19 @@ def _schema_recipe(extraction):
     return payload
 
 
+def _prepare_recipe_data_for_save(extraction, recipe_data):
+    """Map unknown social yield to Tandoor's required internal serving baseline."""
+    servings = extraction.get('servings')
+    if isinstance(servings, int) and servings > 0:
+        recipe_data['servings'] = servings
+    else:
+        # Recipe.servings is non-null. Keep the extracted fact unknown while using
+        # 1 only as the native scaling baseline and avoid displaying "None" as text.
+        recipe_data['servings'] = 1
+        recipe_data['servings_text'] = ''
+    return recipe_data
+
+
 class SocialImportSaveView(SocialImportDetailView):
     def post(self, request, pk):
         job = self.get_object(request, pk)
@@ -198,6 +211,7 @@ class SocialImportSaveView(SocialImportDetailView):
             html = "<script type='application/ld+json'>" + json.dumps(payload) + '</script>'
             scraper = scrape_html(html=html, org_url=job.canonical_url or job.source_url, supported_only=False)
             recipe_data = recipe_import_helper.get_from_scraper(scraper, request)
+            recipe_data = _prepare_recipe_data_for_save(extraction, recipe_data)
             recipe_data['source_url'] = job.canonical_url or job.source_url
 
             serializer = RecipeSerializer(data=recipe_data, context={'request': request})
